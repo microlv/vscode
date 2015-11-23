@@ -1124,6 +1124,8 @@ export class SearchViewlet extends Viewlet {
 
 		this.queryBuilder.text(content, options)
 			.then(query => this.onQueryTriggered(query, patternExcludes, patternIncludes), errors.onUnexpectedError);
+
+		this.findInput.focus(); // focus back to input field
 	}
 
 	private onQueryTriggered(query: ISearchQuery, excludePattern: string, includePattern: string): void {
@@ -1146,6 +1148,7 @@ export class SearchViewlet extends Viewlet {
 		this.disposeModel();
 		this.showEmptyStage();
 
+		let handledMatches: {[id: string]: boolean} = Object.create(null);
 		let autoExpand = (alwaysExpandIfOneResult: boolean) => {
 			// Auto-expand / collapse based on number of matches:
 			// - alwaysExpandIfOneResult: expand file results if we have just one file result and less than 50 matches on a file
@@ -1153,6 +1156,12 @@ export class SearchViewlet extends Viewlet {
 			if (this.viewModel) {
 				let matches = this.viewModel.matches();
 				matches.forEach((match) => {
+					if (handledMatches[match.id()]) {
+						return; // if we once handled a result, do not do it again to keep results stable (the user might have expanded/collapsed meanwhile)
+					}
+
+					handledMatches[match.id()] = true;
+
 					let length = match.matches().length;
 					if (length < 10 || (alwaysExpandIfOneResult && matches.length === 1 && length < 50)) {
 						this.tree.expand(match).done(null, errors.onUnexpectedError);
@@ -1165,17 +1174,26 @@ export class SearchViewlet extends Viewlet {
 
 		let timerEvent = timer.start(timer.Topic.WORKBENCH, 'Search');
 		let isDone = false;
-		let onComplete = (complete: ISearchComplete) => {
+		let onComplete = (completed?: ISearchComplete) => {
 			timerEvent.stop();
 			isDone = true;
 
 			// Complete up to 100% as needed
-			progressRunner.worked(progressTotal - progressWorked);
-			setTimeout(() => progressRunner.done(), 200);
+			if (completed) {
+				progressRunner.worked(progressTotal - progressWorked);
+				setTimeout(() => progressRunner.done(), 200);
+			} else {
+				progressRunner.done();
+			}
 
 			// Show the final results
-			this.viewModel = this.viewModel || this.instantiationService.createInstance(SearchResult, query.contentPattern);
-			this.viewModel.append(complete.results);
+			if (!this.viewModel) {
+				this.viewModel = this.instantiationService.createInstance(SearchResult, query.contentPattern);
+
+				if (completed) {
+					this.viewModel.append(completed.results);
+				}
+			}
 
 			this.tree.refresh().then(() => {
 				autoExpand(true);
@@ -1190,7 +1208,7 @@ export class SearchViewlet extends Viewlet {
 			this.actionRegistry['collapseAll'].enabled = hasResults;
 			this.actionRegistry['clearSearchResults'].enabled = hasResults;
 
-			if (complete.limitHit) {
+			if (completed && completed.limitHit) {
 				this.findInput.showMessage({
 					content: nls.localize('searchMaxResultsWarning', "The result set only contains a subset of all matches. Please be more specific in your search to narrow down the results."),
 					type: MessageType.WARNING
@@ -1202,7 +1220,9 @@ export class SearchViewlet extends Viewlet {
 				let hasIncludes = !!includePattern;
 				let message: string;
 
-				if (hasIncludes && hasExcludes) {
+				if (!completed) {
+					message = nls.localize('searchCanceled', "Search was canceled before any results could be found - ");
+				} else if (hasIncludes && hasExcludes) {
 					message = nls.localize('noResultsIncludesExcludes', "No results found matching '{0}' excluding '{1}' - ", includePattern, excludePattern);
 				} else if (hasIncludes) {
 					message = nls.localize('noResultsIncludes', "No results found matching '{0}' - ", includePattern);
@@ -1216,10 +1236,19 @@ export class SearchViewlet extends Viewlet {
 				this.results.hide();
 				let div = this.messages.empty().show().asContainer().div({ 'class': 'message', text: message });
 
-				if (hasIncludes || hasExcludes) {
+				if (!completed) {
 					$(div).a({
 						'class': ['pointer', 'prominent'],
-						text: nls.localize('rerunSearch.message', "Search again in all files")
+						text: nls.localize('rerunSearch.message', "Search again")
+					}).on(dom.EventType.CLICK, (e: MouseEvent) => {
+						dom.EventHelper.stop(e, false);
+
+						this.onQueryChanged(true);
+					});
+				} else if (hasIncludes || hasExcludes) {
+					$(div).a({
+						'class': ['pointer', 'prominent'],
+						text: nls.localize('rerunSearchInAll.message', "Search again in all files")
 					}).on(dom.EventType.CLICK, (e: MouseEvent) => {
 						dom.EventHelper.stop(e, false);
 
@@ -1248,13 +1277,15 @@ export class SearchViewlet extends Viewlet {
 		};
 
 		let onError = (e: any) => {
-			this.loading = false;
-			isDone = true;
-			progressRunner.done();
-			progressTimer.stop();
-			doneTimer.stop();
+			if (errors.isPromiseCanceledError(e)) {
+				onComplete(null);
+			} else {
+				this.loading = false;
+				isDone = true;
+				progressRunner.done();
+				progressTimer.stop();
+				doneTimer.stop();
 
-			if (!e || e.message !== 'Canceled') {
 				this.messageService.show(2 /* ERROR */, e);
 			}
 		};
@@ -1287,7 +1318,7 @@ export class SearchViewlet extends Viewlet {
 					}).done(null, errors.onUnexpectedError);
 				}
 
-				this.viewModel.append(matches);
+				this.viewModel.append([p]);
 				progressTimer.stop();
 			}
 		};
@@ -1323,6 +1354,11 @@ export class SearchViewlet extends Viewlet {
 				this.tree.refresh().then(() => {
 					autoExpand(false);
 				}).done(null, errors.onUnexpectedError);
+
+				// since we have results now, enable some actions
+				if (!this.actionRegistry['collapseAll'].enabled) {
+					this.actionRegistry['collapseAll'].enabled = true;
+				}
 			}
 		}, 200);
 

@@ -130,8 +130,8 @@ export class MessageList {
 		// Trigger Auto-Purge of messages to keep list small
 		this.purgeMessages();
 
-		// Store in Memory
-		this.messages.push({
+		// Store in Memory (new messages come first so that they show up on top)
+		this.messages.unshift({
 			id: id,
 			text: message,
 			severity: severity,
@@ -295,6 +295,18 @@ export class MessageList {
 
 	public hideMessages(): void {
 		this.hideMessage();
+	}
+
+	public show(): void {
+		if (this.messageListContainer && this.messageListContainer.isHidden()) {
+			this.messageListContainer.show();
+		}
+	}
+
+	public hide(): void {
+		if (this.messageListContainer && !this.messageListContainer.isHidden()) {
+			this.messageListContainer.hide();
+		}
 	}
 
 	private hideMessage(messageText?: string): void;

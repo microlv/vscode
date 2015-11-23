@@ -81,7 +81,7 @@ export class RawDebugSession extends v8.V8Protocol implements debug.IRawDebugSes
 		return this.sendAndLazyEmit('attach', args);
 	}
 
-	public stepOver(args: DebugProtocol.NextArguments): TPromise<DebugProtocol.NextResponse> {
+	public next(args: DebugProtocol.NextArguments): TPromise<DebugProtocol.NextResponse> {
 		return this.sendAndLazyEmit('next', args);
 	}
 
@@ -117,7 +117,7 @@ export class RawDebugSession extends v8.V8Protocol implements debug.IRawDebugSes
 		return this.send('pause', args);
 	}
 
-	public stop(restart = false): TPromise<DebugProtocol.DisconnectResponse> {
+	public disconnect(restart = false): TPromise<DebugProtocol.DisconnectResponse> {
 		if ((this.serverProcess || this.socket) && !this.stopServerPending) {
 			this.stopServerPending = true; // point of no return: from now on don't report any errors
 			return this.send('disconnect', { extensionHostData: { restart: restart } }).then(() => {
@@ -146,11 +146,11 @@ export class RawDebugSession extends v8.V8Protocol implements debug.IRawDebugSes
 		return this.send('scopes', args);
 	}
 
-	public resolveVariables(args: DebugProtocol.VariablesArguments): TPromise<DebugProtocol.VariablesResponse> {
+	public variables(args: DebugProtocol.VariablesArguments): TPromise<DebugProtocol.VariablesResponse> {
 		return this.send('variables', args);
 	}
 
-	public resolveSource(args: DebugProtocol.SourceArguments): TPromise<DebugProtocol.SourceResponse> {
+	public source(args: DebugProtocol.SourceArguments): TPromise<DebugProtocol.SourceResponse> {
 		return this.send('source', args);
 	}
 

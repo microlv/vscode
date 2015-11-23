@@ -12,6 +12,11 @@ exports.data ={
 				"desc": "Defines character set of the document."
 			},
 			{
+				"name": "@counter-style",
+				"desc": "Defines a custom counter style.",
+				"browsers": "FF33"
+			},
+			{
 				"name": "@font-face",
 				"desc": "Allows for linking to fonts that are automatically activated when needed. This permits authors to work around the limitation of 'web-safe' fonts, allowing for consistent rendering independent of the fonts available in a given user's environment."
 			},
@@ -27,7 +32,7 @@ exports.data ={
 			{
 				"name": "@keyframes",
 				"desc": "Defines set of animation key frames.",
-				"browsers": "FF16,IE10,O12.5"
+				"browsers": "C43,FF16,IE10,O12.5,S9"
 			},
 			{
 				"name": "@media",
@@ -44,10 +49,6 @@ exports.data ={
 				"browsers": "FF5"
 			},
 			{
-				"name": "@-moz-viewport",
-				"browsers": "FF"
-			},
-			{
 				"name": "@-ms-viewport",
 				"browsers": "IE10"
 			},
@@ -62,7 +63,7 @@ exports.data ={
 			},
 			{
 				"name": "@-o-viewport",
-				"desc": "Sets the viewport properties in Opera Mobile 11 and newer.",
+				"desc": "Sets the viewport properties in Opera Mobile 11 - 12.1.",
 				"browsers": "O11"
 			},
 			{
@@ -72,16 +73,12 @@ exports.data ={
 			{
 				"name": "@supports",
 				"desc": "A conditional group rule whose condition tests whether the user agent supports CSS property:value pairs.",
-				"browsers": "C,FF,O"
+				"browsers": "C,FF,O,S9"
 			},
 			{
 				"name": "@-webkit-keyframes",
 				"desc": "Defines set of animation key frames.",
 				"browsers": "C,S4"
-			},
-			{
-				"name": "@-webkit-viewport",
-				"browsers": "C,S"
 			}
 		],
 		"pseudoclasses": [
@@ -1713,7 +1710,7 @@ exports.data ={
 			},
 			{
 				"name": "border-image-width",
-				"desc": "The four values of 'border-image-width' specify offsets that are used to divide the border image area into nine parts. They represent inward distances from the the top, right, bottom, and left sides of the area, respectively.",
+				"desc": "The four values of 'border-image-width' specify offsets that are used to divide the border image area into nine parts. They represent inward distances from the top, right, bottom, and left sides of the area, respectively.",
 				"browsers": "FF13,IE11",
 				"restriction": "length, percentage, number",
 				"values": []
@@ -2616,7 +2613,7 @@ exports.data ={
 			},
 			{
 				"name": "counter-increment",
-				"desc": "Counters are used with the 'counter()' and 'counters()' functions of the the 'content' property.",
+				"desc": "Counters are used with the 'counter()' and 'counters()' functions of the 'content' property.",
 				"browsers": "C,FF1.5,IE8,O10.5,S3",
 				"restriction": "identifier, integer",
 				"values": []
@@ -5503,7 +5500,7 @@ exports.data ={
 				"values": [
 					{
 						"name": "center",
-						"desc": "Places the center of the Grid Item's margin box at the center of the the Grid Item's column."
+						"desc": "Places the center of the Grid Item's margin box at the center of the Grid Item's column."
 					},
 					{
 						"name": "end",
@@ -5561,7 +5558,7 @@ exports.data ={
 				"values": [
 					{
 						"name": "center",
-						"desc": "Places the center of the Grid Item's margin box at the center of the the Grid Item's row."
+						"desc": "Places the center of the Grid Item's margin box at the center of the Grid Item's row."
 					},
 					{
 						"name": "end",

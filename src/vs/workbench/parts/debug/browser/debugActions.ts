@@ -155,7 +155,7 @@ export class StepOverDebugAction extends AbstractDebugAction {
 	}
 
 	public run(): Promise {
-		return this.debugService.getActiveSession().stepOver({ threadId: this.debugService.getViewModel().getFocusedThreadId() });
+		return this.debugService.getActiveSession().next({ threadId: this.debugService.getViewModel().getFocusedThreadId() });
 	}
 
 	protected isEnabled(): boolean {
@@ -214,7 +214,7 @@ export class StopDebugAction extends AbstractDebugAction {
 
 	public run(): Promise {
 		var session = this.debugService.getActiveSession();
-		return session ? session.stop() : Promise.as(null);
+		return session ? session.disconnect() : Promise.as(null);
 	}
 
 	protected isEnabled(): boolean {

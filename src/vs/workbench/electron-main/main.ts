@@ -23,7 +23,7 @@ import {Server, serve, connect} from 'vs/base/node/service.net';
 import {getUserEnvironment, IEnv} from 'vs/base/node/env';
 import {Promise, TPromise} from 'vs/base/common/winjs.base';
 import {GitAskpassService} from 'vs/workbench/parts/git/electron-main/askpassService';
-import { spawnSharedProcess } from 'vs/workbench/parts/sharedProcess/node/sharedProcess';
+import { spawnSharedProcess } from 'vs/workbench/electron-main/sharedProcess';
 
 export class LaunchService {
 	public start(args: env.ICommandLineArguments): Promise {
@@ -70,7 +70,11 @@ function quit(arg?: any) {
 	if (typeof arg === 'string') {
 		env.log(arg)
 	} else {
-		env.log('Startup error: ' + arg.toString());
+		if (arg.stack) {
+			console.error(arg.stack);
+		} else {
+			console.error('Startup error: ' + arg.toString());
+		}
 	}
 
 	process.exit();
@@ -96,8 +100,8 @@ function main(ipcServer: Server, userEnv: IEnv): void {
 	// This will help Windows to associate the running program with
 	// any shortcut that is pinned to the taskbar and prevent showing
 	// two icons in the taskbar for the same app.
-	if (platform.isWindows) {
-		app.setAppUserModelId('Microsoft.VisualStudioCode');
+	if (platform.isWindows && env.product.win32AppUserModelId) {
+		app.setAppUserModelId(env.product.win32AppUserModelId);
 	}
 
 	// Set programStart in the global scope
@@ -119,7 +123,7 @@ function main(ipcServer: Server, userEnv: IEnv): void {
 	lifecycle.manager.ready();
 
 	// Load settings
-	settings.manager.load();
+	settings.manager.loadSync();
 
 	// Propagate to clients
 	windows.manager.ready(userEnv);

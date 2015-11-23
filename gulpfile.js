@@ -24,12 +24,13 @@ var path = require('path');
 var bom = require('gulp-bom');
 var sourcemaps = require('gulp-sourcemaps');
 var _ = require('underscore');
+var quiet = !!process.env['VSCODE_BUILD_QUIET'];
 
 var rootDir = path.join(__dirname, 'src');
 var tsOptions = {
 	target: 'ES5',
 	module: 'amd',
-	verbose: true,
+	verbose: !quiet,
 	preserveConstEnums: true,
 	experimentalDecorators: true,
 	sourceMap: true,
@@ -41,7 +42,7 @@ function createCompile(build) {
 	var opts = _.clone(tsOptions);
 	opts.inlineSources = !!build;
 
-	var ts = tsb.create(opts, null, null, function (err) { reporter(err.toString()); });
+	var ts = tsb.create(opts, null, null, quiet ? null : function (err) { reporter(err.toString()); });
 
 	return function (token) {
 		var utf8Filter = filter('**/test/**/*utf8*', { restore: true });
@@ -65,7 +66,7 @@ function createCompile(build) {
 				sourceRoot: tsOptions.sourceRoot
 			}))
 			.pipe(tsFilter.restore)
-			.pipe(reporter());
+			.pipe(quiet ? es.through() : reporter());
 
 		return es.duplex(input, output);
 	};
@@ -134,13 +135,32 @@ gulp.task('fix-eol-style', function() {
 	return gulp.src(LINE_FEED_FILES, { base: '.' }).pipe(style({})).pipe(gulp.dest('.'));
 });
 var WHITESPACE_FILES = LINE_FEED_FILES.concat([
-	'!**/lib/**'
+	'!**/lib/**',
+	'!**/*.d.ts',
+	'!extensions/typescript/server/**',
+	'!test/assert.js',
+	'!**/octicons/**',
+	'!**/vs/languages/sass/test/common/example.scss',
+	'!**/vs/languages/less/common/parser/less.grammar.txt',
+	'!**/vs/languages/css/common/buildscripts/css-schema.xml',
+	'!**/vs/languages/markdown/common/raw.marked.js',
+	'!**/vs/base/common/winjs.base.raw.js',
+	'!**/vs/base/node/terminateProcess.sh',
+	'!extensions/csharp-o/gulpfile.js',
+	'!**/vs/base/node/terminateProcess.sh',
+	'!**/vs/text.js',
+	'!**/vs/nls.js',
+	'!**/vs/css.js',
+	'!**/vs/loader.js',
+	'!extensions/**/snippets/**',
+	'!extensions/**/syntaxes/**',
+	'!extensions/**/themes/**',
 ]);
 gulp.task('whitespace-style', function() {
-	return gulp.src(LINE_FEED_FILES).pipe(style({complain:true, whitespace:true}));
+	return gulp.src(WHITESPACE_FILES).pipe(style({complain:true, whitespace:true}));
 });
 gulp.task('fix-whitespace-style', function() {
-	return gulp.src(LINE_FEED_FILES, { base: '.' }).pipe(style({whitespace:true})).pipe(gulp.dest('.'));
+	return gulp.src(WHITESPACE_FILES, { base: '.' }).pipe(style({whitespace:true})).pipe(gulp.dest('.'));
 });
 
 gulp.task('copyrights', function() {
@@ -186,6 +206,6 @@ gulp.task('mixin', function () {
 		.pipe(gulp.dest('.'));
 });
 
-require('./gulpfile.vscode');
-require('./gulpfile.editor');
-require('./gulpfile.plugins');
+require('./build/gulpfile.vscode');
+require('./build/gulpfile.editor');
+require('./build/gulpfile.plugins');

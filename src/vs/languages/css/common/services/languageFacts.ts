@@ -194,11 +194,11 @@ export var colorKeywords : { [name:string]:string } = {
 };
 
 export var units : { [unitName:string]:string[] } = {
-	'length': ['em', 'rem', 'ex', 'px', 'cm', 'mm', 'in', 'pt', 'pc', 'cc'],
-	'angle': ['deg', 'rad', 'grad'],
+	'length': ['em', 'rem', 'ex', 'px', 'cm', 'mm', 'in', 'pt', 'pc', 'ch', 'vw', 'vh', 'vmin', 'vmax'], 
+	'angle': ['deg', 'rad', 'grad', 'turn'],
 	'time': ['ms', 's'],
-	'frequency': ['hz', 'khz'],
-	'resolution': ['dpi', 'dpcm'],
+	'frequency': ['Hz', 'kHz'],
+	'resolution': ['dpi', 'dpcm', 'dppx'],
 	'percentage': ['%']
 };
 
@@ -480,4 +480,3 @@ export var browserNames = {
 	IE : 'IE',
 	O : 'Opera'
 };
-

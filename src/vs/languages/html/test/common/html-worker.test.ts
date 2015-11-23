@@ -50,7 +50,7 @@ suite('HTML - worker', () => {
 		return { worker: worker, model: model, markers: markers };
 	};
 
- 	var testSuggestionsFor = function(value:string):WinJS.TPromise<Modes.ISuggestions> {
+	var testSuggestionsFor = function(value:string):WinJS.TPromise<Modes.ISuggestions> {
 
 		var idx = value.indexOf('|');
 		var content = value.substr(0, idx) + value.substr(idx + 1);
@@ -62,13 +62,13 @@ suite('HTML - worker', () => {
 		return env.worker.suggest(url, position).then(result => result[0]);
 	};
 
-	  var assertSuggestion = function(completion: Modes.ISuggestions, label: string, type?: string, codeSnippet?: string) {
-		  var proposalsFound = completion.suggestions.filter(function(suggestion: Modes.ISuggestion) {
-			  return suggestion.label === label && (!type || suggestion.type === type) && (!codeSnippet || suggestion.codeSnippet === codeSnippet);
-		  });
-		  if (proposalsFound.length != 1) {
-			  assert.fail("Suggestion not found: " + label + ", has " + completion.suggestions.map(s => s.label).join(', '));
-		  }
+	var assertSuggestion = function(completion: Modes.ISuggestions, label: string, type?: string, codeSnippet?: string) {
+		var proposalsFound = completion.suggestions.filter(function(suggestion: Modes.ISuggestion) {
+			return suggestion.label === label && (!type || suggestion.type === type) && (!codeSnippet || suggestion.codeSnippet === codeSnippet);
+		});
+		if (proposalsFound.length != 1) {
+			assert.fail("Suggestion not found: " + label + ", has " + completion.suggestions.map(s => s.label).join(', '));
+		}
 	};
 
 	test('Intellisense', function(testDone): any {
@@ -224,6 +224,77 @@ suite('HTML - worker', () => {
 			testSuggestionsFor(['<body>', '  <div>', '    </|'].join('\n')).then((completion) => {
 				assert.equal(completion.currentWord, '');
 				assertSuggestion(completion, '/div', null, '  </div>');
+			})
+		]).done(() => testDone(), (errors:any[]) => {
+			testDone(errors.reduce((e1, e2) => e1 || e2));
+		});
+	});
+
+	test('Intellisense aria', function(testDone): any {
+		function assertAriaAttributes(completion) {
+			assertSuggestion(completion, 'aria-activedescendant');
+			assertSuggestion(completion, 'aria-atomic');
+			assertSuggestion(completion, 'aria-autocomplete');
+			assertSuggestion(completion, 'aria-busy');
+			assertSuggestion(completion, 'aria-checked');
+			assertSuggestion(completion, 'aria-colcount');
+			assertSuggestion(completion, 'aria-colindex');
+			assertSuggestion(completion, 'aria-colspan');
+			assertSuggestion(completion, 'aria-controls');
+			assertSuggestion(completion, 'aria-current');
+			assertSuggestion(completion, 'aria-describedat');
+			assertSuggestion(completion, 'aria-describedby');
+			assertSuggestion(completion, 'aria-disabled');
+			assertSuggestion(completion, 'aria-dropeffect');
+			assertSuggestion(completion, 'aria-errormessage');
+			assertSuggestion(completion, 'aria-expanded');
+			assertSuggestion(completion, 'aria-flowto');
+			assertSuggestion(completion, 'aria-grabbed');
+			assertSuggestion(completion, 'aria-haspopup');
+			assertSuggestion(completion, 'aria-hidden');
+			assertSuggestion(completion, 'aria-invalid');
+			assertSuggestion(completion, 'aria-kbdshortcuts');
+			assertSuggestion(completion, 'aria-label');
+			assertSuggestion(completion, 'aria-labelledby');
+			assertSuggestion(completion, 'aria-level');
+			assertSuggestion(completion, 'aria-live');
+			assertSuggestion(completion, 'aria-modal');
+			assertSuggestion(completion, 'aria-multiline');
+			assertSuggestion(completion, 'aria-multiselectable');
+			assertSuggestion(completion, 'aria-orientation');
+			assertSuggestion(completion, 'aria-owns');
+			assertSuggestion(completion, 'aria-placeholder');
+			assertSuggestion(completion, 'aria-posinset');
+			assertSuggestion(completion, 'aria-pressed');
+			assertSuggestion(completion, 'aria-readonly');
+			assertSuggestion(completion, 'aria-relevant');
+			assertSuggestion(completion, 'aria-required');
+			assertSuggestion(completion, 'aria-roledescription');
+			assertSuggestion(completion, 'aria-rowcount');
+			assertSuggestion(completion, 'aria-rowindex');
+			assertSuggestion(completion, 'aria-rowspan');
+			assertSuggestion(completion, 'aria-selected');
+			assertSuggestion(completion, 'aria-setsize');
+			assertSuggestion(completion, 'aria-sort');
+			assertSuggestion(completion, 'aria-valuemax');
+			assertSuggestion(completion, 'aria-valuemin');
+			assertSuggestion(completion, 'aria-valuenow');
+			assertSuggestion(completion, 'aria-valuetext');
+		}
+		WinJS.Promise.join([
+			testSuggestionsFor('<div  |> </div >').then((completion) => {
+				assert.equal(completion.currentWord, '');
+				assertAriaAttributes(completion);
+			}),
+
+			testSuggestionsFor('<span  |> </span >').then((completion) => {
+				assert.equal(completion.currentWord, '');
+				assertAriaAttributes(completion);
+			}),
+
+			testSuggestionsFor('<input  |> </input >').then((completion) => {
+				assert.equal(completion.currentWord, '');
+				assertAriaAttributes(completion);
 			})
 		]).done(() => testDone(), (errors:any[]) => {
 			testDone(errors.reduce((e1, e2) => e1 || e2));

@@ -76,12 +76,12 @@ class ErrorTestingSettings {
 		'    at t.AllWorkers (a/path/that/doesnt/contain/code/names.js:6:8844)',
 		'    at e.(anonymous function) [as _modelEvents] (a/path/that/doesnt/contain/code/names.js:5:29552)',
 		'    at Function.<anonymous> (a/path/that/doesnt/contain/code/names.js:6:8272)',
-	    '    at e.dispatch (a/path/that/doesnt/contain/code/names.js:5:26931)',
-	    '    at e.request (a/path/that/doesnt/contain/code/names.js:14:1745)',
-	    '    at t._handleMessage (another/path/that/doesnt/contain/code/names.js:14:17447)',
-	    '    at t._onmessage (another/path/that/doesnt/contain/code/names.js:14:16976)',
-	    '    at t.onmessage (another/path/that/doesnt/contain/code/names.js:14:15854)',
-	    '    at DedicatedWorkerGlobalScope.self.onmessage',
+		'    at e.dispatch (a/path/that/doesnt/contain/code/names.js:5:26931)',
+		'    at e.request (a/path/that/doesnt/contain/code/names.js:14:1745)',
+		'    at t._handleMessage (another/path/that/doesnt/contain/code/names.js:14:17447)',
+		'    at t._onmessage (another/path/that/doesnt/contain/code/names.js:14:16976)',
+		'    at t.onmessage (another/path/that/doesnt/contain/code/names.js:14:15854)',
+		'    at DedicatedWorkerGlobalScope.self.onmessage',
 		this.dangerousPathWithImportantInfo,
 		this.dangerousPathWithoutImportantInfo,
 		this.missingModelMessage,
@@ -378,7 +378,7 @@ suite('TelemetryService', () => {
 		(<any>window.onerror)('Error Message', 'file.js', 2, 42, testError);
 		this.clock.tick(AbstractTelemetryService.AbstractTelemetryService.ERROR_FLUSH_TIMEOUT);
 
-	    assert.equal(errorStub.alwaysCalledWithExactly('Error Message', 'file.js', 2, 42, testError), true);
+		assert.equal(errorStub.alwaysCalledWithExactly('Error Message', 'file.js', 2, 42, testError), true);
 		assert.equal(errorStub.callCount, 1);
 
 		assert.equal(testAppender.getEventsCount(), 1);
@@ -629,31 +629,38 @@ suite('TelemetryService', () => {
 	}));
 
 	test('Uncaught Error Telemetry removes PII but preserves No Such File error message', sinon.test(function()  {
-		var errorStub = this.stub(window, 'onerror');
-		var settings = new ErrorTestingSettings();
-		var service = new MainTelemetryService.MainTelemetryService();
-		var testAppender = new TestTelemetryAppender();
-		service.addTelemetryAppender(testAppender);
+		var origErrorHandler = Errors.errorHandler.getUnexpectedErrorHandler();
+		Errors.setUnexpectedErrorHandler(() => {});
 
-		var noSuchFileError:any = new Error('noSuchFileMessage');
-		noSuchFileError.stack = settings.stack;
-		(<any>window.onerror)(settings.noSuchFileMessage, 'test.js', 2, 42, noSuchFileError);
-		this.clock.tick(AbstractTelemetryService.AbstractTelemetryService.ERROR_FLUSH_TIMEOUT);
+		try {
+			var errorStub = this.stub(window, 'onerror');
+			var settings = new ErrorTestingSettings();
+			var service = new MainTelemetryService.MainTelemetryService();
+			var testAppender = new TestTelemetryAppender();
+			service.addTelemetryAppender(testAppender);
 
-		assert.equal(errorStub.callCount, 1);
-		// Test that no file information remains, but this particular
-		// error message does (ENOENT: no such file or directory)
-		Errors.onUnexpectedError(noSuchFileError);
-		assert.notEqual(testAppender.events[0].data.message.indexOf(settings.noSuchFilePrefix), -1);
-		assert.equal(testAppender.events[0].data.message.indexOf(settings.personalInfo), -1);
-		assert.equal(testAppender.events[0].data.message.indexOf(settings.filePrefix), -1);
-		assert.notEqual(testAppender.events[0].data.stack.indexOf(settings.noSuchFilePrefix), -1);
-		assert.equal(testAppender.events[0].data.stack.indexOf(settings.personalInfo), -1);
-		assert.equal(testAppender.events[0].data.stack.indexOf(settings.filePrefix), -1);
-		assert.notEqual(testAppender.events[0].data.stack.indexOf(settings.stack[4]), -1);
-		assert.equal(testAppender.events[0].data.stack.split('\n').length, settings.stack.length);
+			var noSuchFileError:any = new Error('noSuchFileMessage');
+			noSuchFileError.stack = settings.stack;
+			(<any>window.onerror)(settings.noSuchFileMessage, 'test.js', 2, 42, noSuchFileError);
+			this.clock.tick(AbstractTelemetryService.AbstractTelemetryService.ERROR_FLUSH_TIMEOUT);
 
-		service.dispose();
+			assert.equal(errorStub.callCount, 1);
+			// Test that no file information remains, but this particular
+			// error message does (ENOENT: no such file or directory)
+			Errors.onUnexpectedError(noSuchFileError);
+			assert.notEqual(testAppender.events[0].data.message.indexOf(settings.noSuchFilePrefix), -1);
+			assert.equal(testAppender.events[0].data.message.indexOf(settings.personalInfo), -1);
+			assert.equal(testAppender.events[0].data.message.indexOf(settings.filePrefix), -1);
+			assert.notEqual(testAppender.events[0].data.stack.indexOf(settings.noSuchFilePrefix), -1);
+			assert.equal(testAppender.events[0].data.stack.indexOf(settings.personalInfo), -1);
+			assert.equal(testAppender.events[0].data.stack.indexOf(settings.filePrefix), -1);
+			assert.notEqual(testAppender.events[0].data.stack.indexOf(settings.stack[4]), -1);
+			assert.equal(testAppender.events[0].data.stack.split('\n').length, settings.stack.length);
+
+			service.dispose();
+		} finally {
+			Errors.setUnexpectedErrorHandler(origErrorHandler);
+		}
 	}));
 
 	test('Test hard idle does not affect sending normal events in active state', sinon.test(function() {

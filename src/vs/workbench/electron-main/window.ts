@@ -215,7 +215,11 @@ export class VSCodeWindow {
 			this._win.restore();
 		}
 
-		this._win.focus();
+		if (platform.isWindows || platform.isLinux) {
+			this._win.show(); // Windows & Linux sometimes cannot bring the window to the front when it is in the background
+		} else {
+			this._win.focus();
+		}
 	}
 
 	public get lastFocusTime(): number {
@@ -373,6 +377,7 @@ export class VSCodeWindow {
 			configuration.logPluginHostCommunication = cli.logPluginHostCommunication;
 			configuration.debugPluginHostPort = cli.debugPluginHostPort;
 			configuration.debugBrkPluginHost = cli.debugBrkPluginHost;
+			configuration.pluginHomePath = cli.pluginHomePath;
 		}
 
 		// Load config

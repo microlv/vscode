@@ -102,7 +102,7 @@ export function getHTML5TagProvider(): IHTMLTagProvider {
 		style: ['media', 'type', 'scoped:v'],
 		script: ['src', 'async:v', 'defer:v', 'type', 'charset'],
 		body: ['onafterprint', 'onbeforeprint', 'onbeforeunload', 'onblur', 'onerror', 'onfocus', 'onhashchange', 'onload', 'onmessage',
-			   'onoffline', 'ononline', 'onpagehide', 'onpageshow', 'onpopstate', 'onresize', 'onscroll', 'onstorage', 'onunload'],
+				'onoffline', 'ononline', 'onpagehide', 'onpageshow', 'onpopstate', 'onresize', 'onscroll', 'onstorage', 'onunload'],
 		table: none,
 		caption: none,
 		colgroup: ['span'],
@@ -137,10 +137,13 @@ export function getHTML5TagProvider(): IHTMLTagProvider {
 		dialog: ['open:v']
 	};
 
-	var globalAttributes = ['accesskey', 'class', 'contenteditable:b', 'contextmenu', 'dir:d', 'draggable:a', 'dropzone', 'hidden:v', 'id', 'inert:v', 'itemid', 'itemprop', 'itemref', 'itemscope:v', 'itemtype',
-		'lang', 'role', 'spellcheck:b', 'style', 'tabindex', 'title', 'translate'];
-
-	// todo@Martin: aria
+	var globalAttributes = [
+		'aria-activedescendant', 'aria-atomic:b', 'aria-autocomplete:autocomplete', 'aria-busy:b', 'aria-checked:tristate', 'aria-colcount', 'aria-colindex', 'aria-colspan', 'aria-controls', 'aria-current:current', 'aria-describedat',
+		'aria-describedby', 'aria-disabled:b', 'aria-dropeffect:dropeffect', 'aria-errormessage', 'aria-expanded:u', 'aria-flowto', 'aria-grabbed:u', 'aria-haspopup:b', 'aria-hidden:b', 'aria-invalid:invalid', 'aria-kbdshortcuts',
+		'aria-label', 'aria-labelledby', 'aria-level', 'aria-live:live', 'aria-modal:b', 'aria-multiline:b', 'aria-multiselectable:b', 'aria-orientation:orientation', 'aria-owns', 'aria-placeholder', 'aria-posinset', 'aria-pressed:tristate',
+		'aria-readonly:b','aria-relevant:relevant', 'aria-required:b', 'aria-roledescription', 'aria-rowcount', 'aria-rowindex', 'aria-rowspan', 'aria-selected:u', 'aria-setsize', 'aria-sort:sort', 'aria-valuemax', 'aria-valuemin', 'aria-valuenow', 'aria-valuetext',
+		'accesskey', 'class', 'contenteditable:b', 'contextmenu', 'dir:d', 'draggable:a', 'dropzone', 'hidden:v', 'id', 'inert:v', 'itemid', 'itemprop', 'itemref', 'itemscope:v', 'itemtype', 'lang', 'role:roles', 'spellcheck:b', 'style', 'tabindex',
+		'title', 'translate'];
 
 	var eventHandlers = ['onabort', 'onblur', 'oncanplay', 'oncanplaythrough', 'onchange', 'onclick', 'oncontextmenu', 'ondblclick', 'ondrag', 'ondragend', 'ondragenter', 'ondragleave', 'ondragover', 'ondragstart',
 		'ondrop', 'ondurationchange', 'onemptied', 'onended', 'onerror', 'onfocus', 'onformchange', 'onforminput', 'oninput', 'oninvalid', 'onkeydown', 'onkeypress', 'onkeyup', 'onload', 'onloadeddata', 'onloadedmetadata',
@@ -150,12 +153,27 @@ export function getHTML5TagProvider(): IHTMLTagProvider {
 	var valueSets : { [tag:string]: string[]} = {
 		b: ['true', 'false'],
 		a: ['true', 'false', 'auto'],
+		u: ['true', 'false', 'undefined'],
 		d: ['ltr', 'rtl'],
 		m: ['get', 'post'],
 		o: ['on', 'off'],
 		t: ['hidden', 'text', 'search', 'tel', 'url', 'email', 'password', 'datetime', 'date', 'month', 'week', 'time', 'datetime-local', 'number', 'range', 'color', 'checkbox', 'radio', 'file', 'submit', 'image', 'reset', 'button'],
 		bt: ['button', 'submit', 'reset'],
-		xo: ['anonymous', 'use-credentials']
+		xo: ['anonymous', 'use-credentials'],
+		tristate: ['true', 'false', 'mixed', 'undefined'],
+		autocomplete: ['inline', 'list', 'both', 'none'],
+		current: ['page', 'step', 'location', 'date', 'time', 'true', 'false'],
+		dropeffect: ['copy', 'move', 'link', 'execute', 'popup', 'none'],
+		invalid: ['grammar', 'false', 'spelling', 'true'],
+		live: ['off', 'polite', 'assertive'],
+		orientation: ['vertical', 'horizontal', 'undefined'],
+		relevant: ['additions', 'removals', 'text', 'all', 'additions text'],
+		sort: ['ascending', 'descending', 'none', 'other'],
+		roles: ['alert', 'alertdialog', 'button', 'checkbox', 'dialog', 'gridcell', 'link', 'log', 'marquee', 'menuitem', 'menuitemcheckbox', 'menuitemradio', 'option', 'progressbar', 'radio', 'scrollbar', 'searchbox', 'slider',
+			'spinbutton', 'status', 'switch', 'tab', 'tabpanel', 'textbox', 'timer', 'tooltip', 'treeitem', 'combobox', 'grid', 'listbox', 'menu', 'menubar', 'radiogroup', 'tablist', 'tree', 'treegrid',
+			'application', 'article', 'cell', 'columnheader', 'definition', 'directory', 'document', 'feed', 'figure', 'group', 'heading', 'img', 'list', 'listitem', 'math', 'none', 'note', 'presentation', 'region', 'row', 'rowgroup',
+			'rowheader', 'separator', 'table', 'term', 'text', 'toolbar',
+			'banner', 'complementary', 'contentinfo', 'form', 'main', 'navigation', 'region', 'search']
 	};
 
 	return {

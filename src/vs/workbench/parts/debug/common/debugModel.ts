@@ -21,7 +21,7 @@ function resolveChildren(debugService: debug.IDebugService, parent: debug.IExpre
 		return TPromise.as([]);
 	}
 
-	return session.resolveVariables({ variablesReference: parent.reference }).then(response => {
+	return session.variables({ variablesReference: parent.reference }).then(response => {
 		return arrays.distinct(response.body.variables, v => v.name).map(
 			v => new Variable(parent, v.variablesReference, v.name, v.value)
 		);
@@ -387,7 +387,7 @@ export class Model extends ee.EventEmitter implements debug.IModel {
 	public addReplExpression(session: debug.IRawDebugSession, stackFrame: debug.IStackFrame, name: string): Promise {
 		var expression = new Expression(name, true);
 		this.replElements.push(expression);
-		return this.evaluateExpression(session, stackFrame, expression, nls.localize('startDebugFirst', "Please start a debug session to evaluate")).then(() =>
+		return this.evaluateExpression(session, stackFrame, expression, true).then(() =>
 			this.emit(debug.ModelEvents.REPL_ELEMENTS_UPDATED, expression)
 		);
 	}
@@ -465,7 +465,7 @@ export class Model extends ee.EventEmitter implements debug.IModel {
 		var filtered = this.watchExpressions.filter(we => we.getId() === id);
 		if (filtered.length === 1) {
 			filtered[0].name = newName;
-			return this.evaluateExpression(session, stackFrame, filtered[0]).then(() => {
+			return this.evaluateExpression(session, stackFrame, filtered[0], false).then(() => {
 				this.emit(debug.ModelEvents.WATCH_EXPRESSIONS_UPDATED, filtered[0]);
 			});
 		}
@@ -480,19 +480,19 @@ export class Model extends ee.EventEmitter implements debug.IModel {
 				return Promise.as(null);
 			}
 
-			return this.evaluateExpression(session, stackFrame, filtered[0]).then(() => {
+			return this.evaluateExpression(session, stackFrame, filtered[0], false).then(() => {
 				this.emit(debug.ModelEvents.WATCH_EXPRESSIONS_UPDATED, filtered[0]);
 			});
 		}
 
-		return Promise.join(this.watchExpressions.map(we => this.evaluateExpression(session, stackFrame, we))).then(() => {
+		return Promise.join(this.watchExpressions.map(we => this.evaluateExpression(session, stackFrame, we, false))).then(() => {
 			this.emit(debug.ModelEvents.WATCH_EXPRESSIONS_UPDATED);
 		});
 	}
 
-	private evaluateExpression(session: debug.IRawDebugSession, stackFrame: debug.IStackFrame, expression: Expression, defaultValue: string = Expression.DEFAULT_VALUE): Promise {
+	private evaluateExpression(session: debug.IRawDebugSession, stackFrame: debug.IStackFrame, expression: Expression, fromRepl: boolean): Promise {
 		if (!session) {
-			expression.value = defaultValue;
+			expression.value = fromRepl ? nls.localize('startDebugFirst', "Please start a debug session to evaluate") : Expression.DEFAULT_VALUE;
 			expression.available = false;
 			expression.reference = 0;
 			return Promise.as(null);
@@ -500,7 +500,8 @@ export class Model extends ee.EventEmitter implements debug.IModel {
 
 		return session.evaluate({
 			expression: expression.name,
-			frameId: stackFrame ? stackFrame.frameId : undefined
+			frameId: stackFrame ? stackFrame.frameId : undefined,
+			context: fromRepl ? 'repl' : 'watch'
 		}).then(response => {
 			expression.value = response.body.result;
 			expression.available = true;
@@ -533,7 +534,14 @@ export class Model extends ee.EventEmitter implements debug.IModel {
 	}
 
 	public sourceIsUnavailable(source: debug.Source): void {
-		source.available = false;
+		Object.keys(this.threads).forEach(key => {
+			this.threads[key].callStack.forEach(stackFrame => {
+				if (stackFrame.source.uri.toString() === source.uri.toString()) {
+					stackFrame.source.available = false;
+				}
+			});
+		});
+
 		this.emit(debug.ModelEvents.CALLSTACK_UPDATED);
 	}
 
