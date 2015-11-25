@@ -12,7 +12,7 @@
 	},
 	"scripts": {
 		"test": "node node_modules/mocha/bin/_mocha",
-		"postinstall": "npm --prefix extensions/csharp-o/ install extensions/csharp-o/"
+		"postinstall": "npm --prefix extensions/csharp-o/ install extensions/csharp-o/ && npm --prefix extensions/vscode-api-tests/ install extensions/vscode-api-tests/"
 	},
 	"dependencies": {
 		"applicationinsights": "0.15.6",
@@ -31,7 +31,6 @@
 	},
 	"devDependencies": {
 		"async": "^1.4.0",
-		"atom-shell-installer-assets": "^0.2.0",
 		"azure-storage": "^0.3.1",
 		"clone": "^1.0.2",
 		"debounce": "^1.0.0",

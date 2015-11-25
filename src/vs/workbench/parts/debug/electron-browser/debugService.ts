@@ -221,11 +221,11 @@ export class DebugService extends ee.EventEmitter implements debug.IDebugService
 		this.toDispose.push(this.session.addListener2(debug.SessionEvents.THREAD, (event: DebugProtocol.ThreadEvent) => {
 			if (event.body.reason === 'started') {
 				this.session.threads().done((result) => {
-					var threads = result.body.threads.filter(thread => thread.id === event.body.threadId);
-					if (threads.length === 1) {
+					const thread = result.body.threads.filter(thread => thread.id === event.body.threadId).pop();
+					if (thread) {
 						this.model.rawUpdate({
-							threadId: threads[0].id,
-							thread: threads[0]
+							threadId: thread.id,
+							thread: thread
 						});
 					}
 				}, errors.onUnexpectedError);
@@ -266,14 +266,14 @@ export class DebugService extends ee.EventEmitter implements debug.IDebugService
 	private getThreadData(threadId: number): Promise {
 		return this.model.getThreads()[threadId] ? Promise.as(true) :
 			this.session.threads().then((response: DebugProtocol.ThreadsResponse) => {
-				var threads = response.body.threads.filter(t => t.id === threadId);
-				if (threads.length !== 1) {
-					throw new Error('Did not get exactly one thread from debug adapter with id ' + threadId);
+				const thread = response.body.threads.filter(t => t.id === threadId).pop();
+				if (!thread) {
+					throw new Error('Did not get a thread from debug adapter with id ' + threadId);
 				}
 
 				this.model.rawUpdate({
-					threadId: threads[0].id,
-					thread: threads[0]
+					threadId: thread.id,
+					thread: thread
 				});
 			});
 	}
@@ -337,10 +337,18 @@ export class DebugService extends ee.EventEmitter implements debug.IDebugService
 	public openConfigFile(sideBySide: boolean): Promise {
 		const resource = uri.file(paths.join(this.contextService.getWorkspace().resource.fsPath, '/.vscode/launch.json'));
 
-		return this.fileService.resolveContent(resource).then(content => content, err =>
-			this.getInitialConfigFileContent().then(content =>
-				this.fileService.updateContent(resource, content))
-		).then(() => {
+		return this.fileService.resolveContent(resource).then(content => {
+			let globalConfig = null;
+			try {
+				globalConfig = <debug.IGlobalConfig> JSON.parse(content.value);
+			} catch (e) { }
+
+			if (!globalConfig || !globalConfig.configurations || globalConfig.configurations.length === 0) {
+				return this.createInitialConfigFile(resource, content.value);
+			}
+		}, err => this.createInitialConfigFile(resource, null))
+
+		.then(() => {
 			this.telemetryService.publicLog('debugConfigure');
 			return this.editorService.openEditor({
 				resource: resource,
@@ -391,16 +399,20 @@ export class DebugService extends ee.EventEmitter implements debug.IDebugService
 		});
 	}
 
-	private getInitialConfigFileContent(): TPromise<string> {
+	private createInitialConfigFile(resource: uri, previousContent: string): Promise {
 		return this.quickOpenService.pick(this.adapters, { placeHolder: nls.localize('selectDebug', "Select Debug Environment") })
 		.then(adapter =>
-			this.massageInitialConfigurations(adapter).then(() =>
-				JSON.stringify({
+			this.massageInitialConfigurations(adapter).then(() => {
+				if (previousContent && !adapter) {
+					return previousContent;
+				}
+
+				return JSON.stringify({
 					version: '0.2.0',
 					configurations: adapter && adapter.initialConfigurations ? adapter.initialConfigurations : []
 				}, null, '\t')
-			)
-		);
+			})
+		).then(content => this.fileService.updateContent(resource, content));
 	}
 
 	private massageInitialConfigurations(adapter: Adapter): Promise {
@@ -588,11 +600,14 @@ export class DebugService extends ee.EventEmitter implements debug.IDebugService
 
 			// No task running, execute the preLaunchTask.
 			this.outputService.showOutput('Tasks', true, true);
-			this.taskService.run(filteredTasks[0].id).then(result => {
+
+			const taskPromise = this.taskService.run(filteredTasks[0].id).then(result => {
 				this.lastTaskEvent = null;
 			}, err => {
 				this.lastTaskEvent = null;
 			});
+
+			return filteredTasks[0].isWatching ? Promise.as(true) : taskPromise;
 		});
 	}
 

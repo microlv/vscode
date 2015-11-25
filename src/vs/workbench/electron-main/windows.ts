@@ -85,6 +85,11 @@ export interface IOpenedPathsList {
 	files: string[];
 }
 
+interface ILogEntry {
+	severity: string;
+	arguments: any;
+}
+
 export class WindowsManager {
 
 	public static autoSaveDelayStorageKey = 'autoSaveDelay';
@@ -94,9 +99,6 @@ export class WindowsManager {
 
 	private static windowsStateStorageKey = 'windowsState';
 	private static themeStorageKey = 'theme'; // TODO@Ben this key is only used to find out if a window can be shown instantly because of light theme, remove once we have support for bg color
-
-	private static legacyLastActiveOpenedFolderStorageKey = 'lastActiveOpenedPath';
-	private static legacyLastActiveWindowStateStorageKey = 'windowUIState';
 
 	private static WINDOWS: window.VSCodeWindow[] = [];
 
@@ -108,20 +110,10 @@ export class WindowsManager {
 
 		this.userEnv = userEnv;
 		this.windowsState = storage.getItem<IWindowsState>(WindowsManager.windowsStateStorageKey) || { openedFolders: [] };
-
-		// TODO@Ben migration: remove me in a couple of versions
-		if (!this.windowsState.lastActiveWindow) {
-			let lastActiveOpenedFolder = storage.getItem<string>(WindowsManager.legacyLastActiveOpenedFolderStorageKey);
-			let lastActiveWindowState = storage.getItem<window.IWindowState>(WindowsManager.legacyLastActiveWindowStateStorageKey);
-
-			if (lastActiveOpenedFolder || lastActiveWindowState) {
-				this.windowsState.lastActiveWindow = { workspacePath: lastActiveOpenedFolder, uiState: lastActiveWindowState || window.defaultWindowState() };
-			}
-		}
 	}
 
 	private registerListeners(): void {
-		app.on('activate', (event:Event, hasVisibleWindows:boolean) => {
+		app.on('activate', (event: Event, hasVisibleWindows: boolean) => {
 			env.log('App#activate');
 
 			// Mac only event: reopen last window when we get activated
@@ -247,7 +239,23 @@ export class WindowsManager {
 			if (broadcast.channel && broadcast.payload) {
 				this.sendToAll('vscode:broadcast', broadcast, [windowId]);
 			}
-		})
+		});
+
+		ipc.on('vscode:log', (event: Event, logEntry: ILogEntry) => {
+			let args = [];
+			try {
+				let parsed = JSON.parse(logEntry.arguments);
+				args.push(...Object.getOwnPropertyNames(parsed).map(o => parsed[o]));
+			} catch (error) {
+				args.push(logEntry.arguments);
+			}
+
+			console[logEntry.severity].apply(console, args);
+		});
+
+		ipc.on('vscode:exit', (event: Event, code: number) => {
+			process.exit(code);
+		});
 
 		UpdateManager.on('update-downloaded', (update: IUpdate) => {
 			this.sendToFocused('vscode:telemetry', { eventName: 'update:downloaded', data: { version: update.version } });
@@ -369,8 +377,12 @@ export class WindowsManager {
 
 			// Let the user settings override how files are open in a new window or same window
 			let openFilesInNewWindow = openConfig.forceNewWindow;
-			if (openFilesInNewWindow && !openConfig.cli.pluginDevelopmentPath) {
-				openFilesInNewWindow = settings.manager.getValue('window.openInNewWindow', openFilesInNewWindow); // can be overriden via settings (not for PDE though!)
+			if (openFilesInNewWindow && !openConfig.cli.pluginDevelopmentPath) { // can be overriden via settings (not for PDE though!)
+				if (settings.manager.getValue('window.openInNewWindow', null) !== null) {
+					openFilesInNewWindow = settings.manager.getValue('window.openInNewWindow', openFilesInNewWindow); // TODO@Ben remove legacy setting in a couple of versions
+				} else {
+					openFilesInNewWindow = settings.manager.getValue('window.openFilesInNewWindow', openFilesInNewWindow);
+				}
 			}
 
 			// Open Files in last instance if any and flag tells us so
