@@ -8,13 +8,16 @@ var filter = require('gulp-filter');
 var es = require('event-stream');
 var path = require('path');
 
-var eolFilter = [
+var all = [
 	'build/**/*',
 	'extensions/**/*',
 	'scripts/**/*',
 	'src/**/*',
-	'test/**/*',
-	'!extensions/csharp-o/bin/**',
+	'test/**/*'
+];
+
+var eolFilter = [
+	'**',
 	'!extensions/**/out/**',
 	'!**/node_modules/**',
 	'!**/fixtures/**',
@@ -28,6 +31,7 @@ var indentationFilter = [
 	'!extensions/typescript/server/**',
 	'!test/assert.js',
 	'!**/package.json',
+	'!**/npm-shrinkwrap.json',
 	'!**/octicons/**',
 	'!**/vs/languages/sass/test/common/example.scss',
 	'!**/vs/languages/less/common/parser/less.grammar.txt',
@@ -35,7 +39,6 @@ var indentationFilter = [
 	'!**/vs/languages/markdown/common/raw.marked.js',
 	'!**/vs/base/common/winjs.base.raw.js',
 	'!**/vs/base/node/terminateProcess.sh',
-	'!extensions/csharp-o/gulpfile.js',
 	'!**/vs/base/node/terminateProcess.sh',
 	'!**/vs/text.js',
 	'!**/vs/nls.js',
@@ -64,12 +67,12 @@ var copyrightHeader = [
 	' *--------------------------------------------------------------------------------------------*/'
 ].join('\n');
 
-gulp.task('hygiene', function() {
+var hygiene = exports.hygiene = function (some) {
 	var errorCount = 0;
 
 	var eol = es.through(function (file) {
 		if (/\r\n?/g.test(file.contents.toString('utf8'))) {
-			console.error(file.path + ': Bad EOL found');
+			console.error(file.relative + ': Bad EOL found');
 			errorCount++;
 		}
 
@@ -81,14 +84,14 @@ gulp.task('hygiene', function() {
 			.toString('utf8')
 			.split(/\r\n|\r|\n/)
 			.forEach(function(line, i) {
-				if (line.length === 0) {
-					// empty lines are OK
+				if (/^\s*$/.test(line)) {
+					// empty or whitespace lines are OK
 				} else if (/^[\t]*[^\s]/.test(line)) {
 					// good indent
 				} else if (/^[\t]* \*/.test(line)) {
 					// block comment using an extra space
 				} else {
-					console.error(file.path + '(' + (i + 1) + ',1): Bad whitespace indentation');
+					console.error(file.relative + '(' + (i + 1) + ',1): Bad whitespace indentation');
 					errorCount++;
 				}
 			});
@@ -98,13 +101,16 @@ gulp.task('hygiene', function() {
 
 	var copyrights = es.through(function (file) {
 		if (file.contents.toString('utf8').indexOf(copyrightHeader) !== 0) {
-			console.error(file.path + ': Missing or bad copyright statement');
+			console.error(file.relative + ': Missing or bad copyright statement');
 			errorCount++;
 		}
+
+		this.emit('data', file);
 	});
 
-	return gulp.src(eolFilter, { base: '.' })
+	return gulp.src(some || all, { base: '.' })
 		.pipe(filter(function (f) { return !f.stat.isDirectory(); }))
+		.pipe(filter(eolFilter))
 		.pipe(eol)
 		.pipe(filter(indentationFilter))
 		.pipe(indentation)
@@ -112,9 +118,35 @@ gulp.task('hygiene', function() {
 		.pipe(copyrights)
 		.pipe(es.through(null, function () {
 			if (errorCount > 0) {
-				this.emit('error', 'Hygiene failed with ' + errorCount + ' errors.\nCheck build/gulpfile.hygiene.js for the hygiene rules.');
+				this.emit('error', 'Hygiene failed with ' + errorCount + ' errors. Check \'build/gulpfile.hygiene.js\'.');
 			} else {
 				this.emit('end');
 			}
 		}));
+};
+
+gulp.task('hygiene', function () {
+	return hygiene();
 });
+
+// this allows us to run this as a git pre-commit hook
+if (require.main === module) {
+	var cp = require('child_process');
+	cp.exec('git diff --cached --name-only', function (err, out) {
+		if (err) {
+			console.error();
+			console.error(err);
+			process.exit(1);
+		}
+
+		var some = out
+			.split(/\r?\n/)
+			.filter(function (l) { return !!l; });
+
+		hygiene(some).on('error', function (err) {
+			console.error();
+			console.error(err);
+			process.exit(1);
+		});
+	});
+}

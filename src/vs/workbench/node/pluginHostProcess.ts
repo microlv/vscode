@@ -16,8 +16,14 @@ interface IRendererConnection {
 	initData: IInitData;
 }
 
+// This calls exit directly in case the initialization is not finished and we need to exit
+// Otherwise, if initialization completed we go to pluginHostMain.terminate()
+var onTerminate = function() {
+	exit();
+};
+
 function connectToRenderer(): TPromise<IRendererConnection> {
-	return new TPromise((c, e) => {
+	return new TPromise<IRendererConnection>((c, e) => {
 		const stats: number[] = [];
 
 		// Listen init data message
@@ -28,7 +34,13 @@ function connectToRenderer(): TPromise<IRendererConnection> {
 			});
 
 			// Listen to all other messages
-			process.on('message', msg => remoteCom.handle(msg));
+			process.on('message', (msg) => {
+				if (msg.type === '__$terminate') {
+					onTerminate();
+					return;
+				}
+				remoteCom.handle(msg);
+			});
 
 			// Print a console message when rejection isn't handled. For details
 			// see https://nodejs.org/api/process.html#process_event_unhandledrejection
@@ -36,7 +48,7 @@ function connectToRenderer(): TPromise<IRendererConnection> {
 			process.on('unhandledRejection', function(reason, promise) {
 				// 'promise' seems to be undefined all the time and
 				// that's why we cannot use the rejectionhandled event
-				console.error('unhandled rejected promise', promise);
+				console.warn('potentially unhandled rejected promise', promise);
 				onUnexpectedError(reason);
 			});
 
@@ -50,7 +62,7 @@ function connectToRenderer(): TPromise<IRendererConnection> {
 				try {
 					process.kill(msg.parentPid, 0); // throws an exception if the main process doesn't exist anymore.
 				} catch (e) {
-					exit();
+					onTerminate();
 				}
 			}, 5000);
 
@@ -85,6 +97,10 @@ TPromise.join<any>([connectToRenderer(), connectToSharedProcess()])
 		const sharedProcessClient: Client = result[1];
 		const instantiationService = createServices(renderer.remoteCom, renderer.initData, sharedProcessClient);
 		const pluginHostMain = instantiationService.createInstance(PluginHostMain);
+
+		onTerminate = () => {
+			pluginHostMain.terminate();
+		};
 
 		pluginHostMain.start()
 			.done(null, err => console.error(err));

@@ -23,7 +23,7 @@ import viewlet = require('vs/workbench/browser/viewlet');
 import debug = require('vs/workbench/parts/debug/common/debug');
 import model = require('vs/workbench/parts/debug/common/debugModel');
 import viewer = require('vs/workbench/parts/debug/browser/debugViewer');
-import dbgactions = require('vs/workbench/parts/debug/browser/debugActions');
+import dbgactions = require('vs/workbench/parts/debug/electron-browser/debugActions');
 import dbgactionitems = require('vs/workbench/parts/debug/browser/debugActionItems');
 import { IContextMenuService } from 'vs/platform/contextview/browser/contextView';
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
@@ -297,7 +297,8 @@ class BreakpointsView extends viewlet.AdaptiveCollapsibleViewletView {
 		@IInstantiationService private instantiationService: IInstantiationService
 	) {
 		super(actionRunner, BreakpointsView.getExpandedBodySize(
-			debugService.getModel().getBreakpoints().length + debugService.getModel().getExceptionBreakpoints().length), !!settings[BreakpointsView.MEMENTO], 'breakpointsView', messageService, contextMenuService);
+			debugService.getModel().getBreakpoints().length + debugService.getModel().getFunctionBreakpoints().length + debugService.getModel().getExceptionBreakpoints().length),
+			!!settings[BreakpointsView.MEMENTO], 'breakpointsView', messageService, contextMenuService);
 
 		this.toDispose.push(this.debugService.getModel().addListener2(debug.ModelEvents.BREAKPOINTS_UPDATED,() => this.onBreakpointsChange()));
 	}
@@ -325,6 +326,12 @@ class BreakpointsView extends viewlet.AdaptiveCollapsibleViewletView {
 						return -1;
 					}
 					if (second instanceof model.ExceptionBreakpoint) {
+						return 1;
+					}
+					if (first instanceof model.FunctionBreakpoint) {
+						return -1;
+					}
+					if(second instanceof model.FunctionBreakpoint) {
 						return 1;
 					}
 
@@ -369,6 +376,7 @@ class BreakpointsView extends viewlet.AdaptiveCollapsibleViewletView {
 
 	public getActions(): actions.IAction[] {
 		return [
+			this.instantiationService.createInstance(dbgactions.AddFunctionBreakpointAction, dbgactions.AddFunctionBreakpointAction.ID, dbgactions.AddFunctionBreakpointAction.LABEL),
 			this.instantiationService.createInstance(dbgactions.ReapplyBreakpointsAction, dbgactions.ReapplyBreakpointsAction.ID, dbgactions.ReapplyBreakpointsAction.LABEL),
 			this.instantiationService.createInstance(dbgactions.ToggleBreakpointsActivatedAction, dbgactions.ToggleBreakpointsActivatedAction.ID, dbgactions.ToggleBreakpointsActivatedAction.LABEL),
 			this.instantiationService.createInstance(dbgactions.RemoveAllBreakpointsAction, dbgactions.RemoveAllBreakpointsAction.ID, dbgactions.RemoveAllBreakpointsAction.LABEL)
@@ -376,7 +384,9 @@ class BreakpointsView extends viewlet.AdaptiveCollapsibleViewletView {
 	}
 
 	private onBreakpointsChange(): void {
-		this.expandedBodySize = BreakpointsView.getExpandedBodySize(this.debugService.getModel().getBreakpoints().length + this.debugService.getModel().getExceptionBreakpoints().length);
+		const model = this.debugService.getModel();
+		this.expandedBodySize = BreakpointsView.getExpandedBodySize(
+			model.getBreakpoints().length + model.getExceptionBreakpoints().length + model.getFunctionBreakpoints().length);
 
 		if (this.tree) {
 			this.tree.refresh();

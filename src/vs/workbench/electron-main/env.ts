@@ -50,11 +50,6 @@ export interface IProductConfiguration {
 		key: string;
 		asimovKey: string;
 	},
-	sendASmile: {
-		submitUrl: string,
-		reportIssueUrl: string,
-		requestFeatureUrl: string
-	},
 	documentationUrl: string,
 	releaseNotesUrl: string,
 	twitterUrl: string,
@@ -115,11 +110,16 @@ export function log(...a: any[]): void {
 	}
 }
 
+export interface IProcessEnvironment {
+	[key: string]: string;
+}
+
 export interface ICommandLineArguments {
 	verboseLogging: boolean;
 	debugPluginHostPort: number;
 	debugBrkPluginHost: boolean;
 	logPluginHostCommunication: boolean;
+	disablePlugins: boolean;
 
 	pluginHomePath: string;
 	pluginDevelopmentPath: string;
@@ -198,7 +198,8 @@ function parseCli(): ICommandLineArguments {
 		gotoLineMode: gotoLineMode,
 		pluginHomePath: normalizePath(parseString(args, '--extensionHomePath')),
 		pluginDevelopmentPath: normalizePath(parseString(args, '--extensionDevelopmentPath')),
-		pluginTestsPath: normalizePath(parseString(args, '--extensionTestsPath'))
+		pluginTestsPath: normalizePath(parseString(args, '--extensionTestsPath')),
+		disablePlugins: !!opts['disableExtensions'] || !!opts['disable-extensions']
 	};
 }
 

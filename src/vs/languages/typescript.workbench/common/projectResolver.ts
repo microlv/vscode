@@ -35,15 +35,18 @@ interface $ProjectPerf {
 	projects: number;
 }
 
+const defaultExcludeSegments: string[] = [
+	'/.git/',
+	'/node_modules/',
+	'/bower_components/',
+	'/jspm_packages/',
+	'/tmp/',
+	'/temp/',
+]
+
 class ProjectFileEventListener {
 
-	private static _ignores = [
-		paths.normalize('/node_modules/', true),
-		paths.normalize('/.git/', true),
-		paths.normalize('/bower_components/', true),
-		paths.normalize('/tmp/', true),
-		paths.normalize('/temp/', true),
-	];
+	private static _ignores = defaultExcludeSegments.map(s => paths.normalize(s, true));
 
 	private _excludes: string[];
 	private _includes: string[];
@@ -106,6 +109,9 @@ class VirtualProjectFileEventListener extends ProjectFileEventListener {
 
 class ProjectResolver implements typescript.IProjectResolver2 {
 
+	private static _defaultExcludePattern = `{${defaultExcludeSegments.map(s => `**${s}**`).join(',')}}`;
+	private static _defaultExcludePatternForVirtualProject = `{**/lib*.d.ts,${defaultExcludeSegments.map(s => `**${s}**`).join(',')}}`;
+
 	private _fileService: Files.IFileService;
 	private _searchService: ISearchService;
 	private _eventService: IEventService;
@@ -137,7 +143,7 @@ class ProjectResolver implements typescript.IProjectResolver2 {
 		this._consumer = consumer;
 		this._configuration = configuration;
 
-		this._fileChangesHandler = new async.RunOnceScheduler(this._processFileChangesEvents.bind(this), 1500);
+		this._fileChangesHandler = new async.RunOnceScheduler(this._processFileChangesEvents.bind(this), 1000);
 		this._unbindListener = this._eventService.addListener(Files.EventType.FILE_CHANGES,
 			this._onFileChangesEvent.bind(this));
 	}
@@ -291,12 +297,13 @@ class ProjectResolver implements typescript.IProjectResolver2 {
 		includePattern[globPattern] = true;
 
 		let excludePattern: glob.IExpression = Object.create(null);
-		excludePattern['{**/node_modules/**,**/.git/**,**/bower_components/**,**/tmp/**,**/temp**}'] = true;
+		excludePattern[ProjectResolver._defaultExcludePattern] = true;
 
 		// add custom exclude patterns
 		if(Array.isArray(excludes)) {
-			for(let exclude of excludes) {
-				excludePattern[`/${exclude}/**`] = true;
+			for (let exclude of excludes) {
+				exclude = exclude.replace(/^[\\\/]/, '').replace(/[\\\/]$/, '');
+				excludePattern[`${exclude}/**`] = true;
 			}
 		}
 
@@ -432,12 +439,15 @@ class ProjectResolver implements typescript.IProjectResolver2 {
 		this._projectFileEventListener[typescript.virtualProjectResource.toString()] =
 			new VirtualProjectFileEventListener(undefined, undefined, undefined);
 
+		let excludePattern: glob.IExpression = Object.create(null);
+		excludePattern[ProjectResolver._defaultExcludePatternForVirtualProject] = true;
+
 		return this._searchService.search({
 			rootResources: [this._workspace],
 			type: QueryType.File,
 			maxResults: 50,
 			includePattern: { '**/*.d.ts': true },
-			excludePattern: { '{**/lib*.d.ts,**/node_modules/**,**/.git/**,**/bower_components/**,**/tmp/**,**/temp/**}': true },
+			excludePattern
 		}).then(result => {
 
 			let files: URI[] = [];
@@ -554,7 +564,6 @@ class ProjectResolver implements typescript.IProjectResolver2 {
 namespace glob2 {
 
 	const prefix1 = '**/*.';
-	const prefix2 = '**/';
 
 	export function match(pattern: string, path: string): boolean {
 		if (pattern[0] === '{' && pattern[pattern.length - 1] === '}') {
@@ -570,19 +579,17 @@ namespace glob2 {
 		let offset = -1;
 		if (pattern.indexOf(prefix1) === 0) {
 			offset = prefix1.length;
-		} else if (pattern.indexOf(prefix2) === 0) {
-			offset = prefix2.length;
 		}
 		if (offset === -1) {
 			return glob.match(pattern, path);
 		}
 		let suffix = pattern.substring(offset);
-		if (suffix.indexOf('*') !== -1) {
+		if (suffix.match(/[.\\\/*]/)) {
 			return glob.match(pattern, path);
 		}
 
 		// endWith check
-		offset = path.indexOf(suffix);
+		offset = path.lastIndexOf(suffix);
 		if (offset === -1) {
 			return false;
 		} else {

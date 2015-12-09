@@ -30,6 +30,7 @@ define([
 	'vs/workbench/browser/actions/triggerEditorActions',
 	'vs/workbench/browser/actions/triggerNavigation',
 	'vs/workbench/browser/actions/showPerformanceBox',
+	'vs/workbench/browser/actions/openSettings',
 
 	'vs/workbench/parts/quickopen/browser/gotoSymbolHandler',
 	'vs/workbench/parts/quickopen/browser/commandsHandler',
@@ -48,7 +49,6 @@ define([
 	'vs/workbench/parts/git/browser/gitQuickOpen',
 	'vs/workbench/parts/git/browser/gitActions.contribution',
 
-	'vs/workbench/parts/debug/browser/debug.contribution',
 	'vs/workbench/parts/debug/electron-browser/debug.contribution',
 
 	'vs/workbench/parts/extensions/electron-browser/extensions.contribution',
@@ -61,7 +61,6 @@ define([
 	'vs/workbench/parts/markdown/browser/markdownActions.contribution',
 
 	'vs/workbench/browser/workbench',
-	'vs/workbench/browser/actions/openSettings',
 
 	'vs/workbench/parts/tasks/electron-browser/task.contribution',
 
@@ -75,8 +74,6 @@ define([
 	'vs/workbench/parts/telemetry/node/appInsights.telemetry.contribution',
 
 	'vs/workbench/parts/themes/electron-browser/themes.contribution',
-
-	'vs/workbench/parts/feedback/electron-browser/feedback.contribution',
 
 	'vs/workbench/electron-browser/main.contribution',
 	'vs/workbench/electron-browser/main'

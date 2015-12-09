@@ -10,7 +10,7 @@ import TokensBinaryEncoding = require('vs/editor/common/model/tokensBinaryEncodi
 import {IInstantiationService, INewConstructorSignature1, IConstructorSignature2, INewConstructorSignature2} from 'vs/platform/instantiation/common/instantiation';
 import {IAction} from 'vs/base/common/actions';
 import {IHTMLContentElement} from 'vs/base/common/htmlContent';
-import {URL} from 'vs/base/common/network';
+import URI from 'vs/base/common/uri';
 import Event from 'vs/base/common/event';
 import {IDisposable} from 'vs/base/common/lifecycle';
 import {TPromise} from 'vs/base/common/winjs.base';
@@ -334,6 +334,11 @@ export interface ICommonEditorOptions {
 	 */
 	overviewRulerLanes?:number;
 	/**
+	 * Control the cursor blinking animation.
+	 * Defaults to 'blink'.
+	 */
+	cursorBlinking?:string;
+	/**
 	 * Should the cursor be hidden in the overview ruler.
 	 * Defaults to false.
 	 */
@@ -485,12 +490,14 @@ export interface ICommonEditorOptions {
 export interface IEditorOptions extends ICommonEditorOptions {
 	/**
 	 * Tab size in spaces. This is used for rendering and for editing.
-	 * Defaults to 'auto', meaning the model attached to the editor will be scanned and this property will be guessed.
+	 * 'auto' means the model attached to the editor will be scanned and this property will be guessed.
+	 * Defaults to 4.
 	 */
 	tabSize?:any;
 	/**
 	 * Insert spaces instead of tabs when indenting or when auto-indenting.
-	 * Defaults to 'auto', meaning the model attached to the editor will be scanned and this property will be guessed.
+	 * 'auto' means the model attached to the editor will be scanned and this property will be guessed.
+	 * Defaults to true.
 	 */
 	insertSpaces?:any;
 	/**
@@ -577,6 +584,7 @@ export interface IInternalEditorOptions {
 	readOnly:boolean;
 	scrollbar:IInternalEditorScrollbarOptions;
 	overviewRulerLanes:number;
+	cursorBlinking:string;
 	hideCursorInOverviewRuler:boolean;
 	scrollBeyondLastLine:boolean;
 	wrappingIndent: string;
@@ -667,6 +675,7 @@ export interface IConfigurationChangedEvent {
 	readOnly:boolean;
 	scrollbar:boolean;
 	overviewRulerLanes:boolean;
+	cursorBlinking:boolean;
 	hideCursorInOverviewRuler:boolean;
 	scrollBeyondLastLine:boolean;
 	wrappingIndent:boolean;
@@ -1452,6 +1461,18 @@ export interface ITokenizedModel extends ITextModel {
 	 * @param position The position at which to look for a bracket.
 	 */
 	matchBracket(position:IPosition, inaccurateResultAcceptable?:boolean): IMatchBracketResult;
+
+	/**
+	 * No mode supports allowed on this model because it is simply too large.
+	 * (even tokenization would cause too much memory pressure)
+	 */
+	isTooLargeForHavingAMode(): boolean;
+
+	/**
+	 * Only basic mode supports allowed on this model because it is simply too large.
+	 * (tokenization is allowed and other basic supports)
+	 */
+	isTooLargeForHavingARichMode(): boolean;
 }
 
 /**
@@ -1703,7 +1724,7 @@ export interface IModel extends IEditableTextModel, ITextModelWithMarkers, IToke
 	/**
 	 * Gets the resource associated with this editor model.
 	 */
-	getAssociatedResource(): URL;
+	getAssociatedResource(): URI;
 
 	/**
 	 * Search the model.
@@ -1754,7 +1775,6 @@ export interface IModel extends IEditableTextModel, ITextModelWithMarkers, IToke
 
 	onBeforeDetached(): void;
 
-	getURL(): URL;
 	getModeId(): string;
 
 	/**
@@ -1772,7 +1792,7 @@ export interface IMirrorModel extends IEventEmitter, ITokenizedModel {
 	getEmbeddedAtPosition(position:IPosition): IMirrorModel;
 	getAllEmbedded(): IMirrorModel[];
 
-	getAssociatedResource(): URL;
+	getAssociatedResource(): URI;
 	getProperty(key:string): any;
 
 	getOffsetFromPosition(position:IPosition): number;
@@ -3264,6 +3284,8 @@ export var Handler = {
 
 	CursorEnd:					'cursorEnd',
 	CursorEndSelect:			'cursorEndSelect',
+
+	ExpandLineSelection:		'expandLineSelection',
 
 	CursorTop:					'cursorTop',
 	CursorTopSelect:			'cursorTopSelect',

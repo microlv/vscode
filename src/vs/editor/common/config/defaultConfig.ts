@@ -33,6 +33,7 @@ class ConfigClass implements IConfiguration {
 				horizontalHasArrows: false
 			},
 			overviewRulerLanes: 2,
+			cursorBlinking: 'blink',
 			hideCursorInOverviewRuler: false,
 			scrollBeyondLastLine: true,
 			automaticLayout: false,
@@ -62,8 +63,8 @@ class ConfigClass implements IConfiguration {
 			referenceInfos: true,
 			renderWhitespace: false,
 
-			tabSize: 'auto',
-			insertSpaces: 'auto',
+			tabSize: 4,
+			insertSpaces: true,
 			fontFamily: '',
 			fontSize: 0,
 			lineHeight: 0
