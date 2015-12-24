@@ -4,17 +4,15 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import {TPromise, Promise, PPromise} from 'vs/base/common/winjs.base';
+import {TPromise} from 'vs/base/common/winjs.base';
 import nls = require('vs/nls');
 import {ThrottledDelayer} from 'vs/base/common/async';
 import paths = require('vs/base/common/paths');
 import labels = require('vs/base/common/labels');
-import strings = require('vs/base/common/strings');
 import URI from 'vs/base/common/uri';
 import {IRange} from 'vs/editor/common/editorCommon';
-import {IAutoFocus} from 'vs/base/parts/quickopen/browser/quickOpen';
-import {QuickOpenEntry, QuickOpenModel, IHighlight} from 'vs/base/parts/quickopen/browser/quickOpenModel';
-import comparers = require('vs/base/common/comparers');
+import {IAutoFocus} from 'vs/base/parts/quickopen/common/quickOpen';
+import {QuickOpenEntry, QuickOpenModel} from 'vs/base/parts/quickopen/browser/quickOpenModel';
 import {QuickOpenHandler, EditorQuickOpenEntry} from 'vs/workbench/browser/quickopen';
 import {QueryBuilder} from 'vs/workbench/parts/search/common/searchQuery';
 import {ITextFileService} from 'vs/workbench/parts/files/common/files';
@@ -23,7 +21,7 @@ import {IWorkbenchEditorService, IFileInput} from 'vs/workbench/services/editor/
 import {IConfigurationService} from 'vs/platform/configuration/common/configuration';
 import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
 import {IMessageService} from 'vs/platform/message/common/message';
-import {IQueryOptions, ISearchService, ISearchComplete, ISearchProgressItem} from 'vs/platform/search/common/search';
+import {IQueryOptions, ISearchService} from 'vs/platform/search/common/search';
 import {IWorkspaceContextService} from 'vs/platform/workspace/common/workspace';
 
 export class FileEntry extends EditorQuickOpenEntry {
@@ -89,6 +87,7 @@ export class OpenFileHandler extends QuickOpenHandler {
 	private queryBuilder: QueryBuilder;
 	private delayer: ThrottledDelayer<QuickOpenEntry[]>;
 	private isStandalone: boolean;
+	private fuzzyMatchingEnabled: boolean;
 
 	constructor(
 		@IWorkbenchEditorService private editorService: IWorkbenchEditorService,
@@ -109,6 +108,10 @@ export class OpenFileHandler extends QuickOpenHandler {
 	public setStandalone(standalone: boolean) {
 		this.delayer = standalone ? new ThrottledDelayer<QuickOpenEntry[]>(OpenFileHandler.SEARCH_DELAY) : null;
 		this.isStandalone = standalone;
+	}
+
+	public setFuzzyMatchingEnabled(enabled: boolean): void {
+		this.fuzzyMatchingEnabled = enabled;
 	}
 
 	public getResults(searchValue: string): TPromise<QuickOpenModel> {
@@ -133,7 +136,7 @@ export class OpenFileHandler extends QuickOpenHandler {
 			rootResources.push(this.contextService.getWorkspace().resource);
 		}
 
-		let query: IQueryOptions = { filePattern: searchValue, rootResources: rootResources };
+		let query: IQueryOptions = { filePattern: searchValue, matchFuzzy: this.fuzzyMatchingEnabled, rootResources: rootResources };
 
 		return this.queryBuilder.file(query).then((query) => this.searchService.search(query)).then((complete) => {
 
@@ -148,7 +151,7 @@ export class OpenFileHandler extends QuickOpenHandler {
 				let entry = this.instantiationService.createInstance(FileEntry, label, description, fileMatch.resource);
 
 				// Apply highlights
-				let {labelHighlights, descriptionHighlights} = QuickOpenEntry.highlight(entry, searchValue);
+				let {labelHighlights, descriptionHighlights} = QuickOpenEntry.highlight(entry, searchValue, this.fuzzyMatchingEnabled);
 				entry.setHighlights(labelHighlights, descriptionHighlights);
 
 				results.push(entry);

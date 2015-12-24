@@ -4,17 +4,13 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import {Promise, TPromise} from 'vs/base/common/winjs.base';
+import {TPromise} from 'vs/base/common/winjs.base';
 import nls = require('vs/nls');
-import errors = require('vs/base/common/errors');
 import {ThrottledDelayer} from 'vs/base/common/async';
-import strings = require('vs/base/common/strings');
 import URI from 'vs/base/common/uri';
-import {Registry} from 'vs/platform/platform';
 import {QuickOpenHandler, EditorQuickOpenEntry} from 'vs/workbench/browser/quickopen';
 import {QuickOpenModel, QuickOpenEntry, IHighlight} from 'vs/base/parts/quickopen/browser/quickOpenModel';
-import {IAutoFocus} from 'vs/base/parts/quickopen/browser/quickOpen';
-import {IEditorModesRegistry, Extensions} from 'vs/editor/common/modes/modesRegistry';
+import {IAutoFocus} from 'vs/base/parts/quickopen/common/quickOpen';
 import filters = require('vs/base/common/filters');
 import {IRange} from 'vs/editor/common/editorCommon';
 import {EditorInput} from 'vs/workbench/common/editor';
@@ -23,7 +19,7 @@ import {IWorkbenchEditorService, IFileInput} from 'vs/workbench/services/editor/
 import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
 import {IWorkspaceContextService} from 'vs/platform/workspace/common/workspace';
 import {IModeService} from 'vs/editor/common/services/modeService';
-import {NavigateTypesSupportRegistry, ITypeBearing, getNavigateToItems} from '../common/search';
+import {ITypeBearing, getNavigateToItems} from 'vs/workbench/parts/search/common/search';
 
 class SymbolEntry extends EditorQuickOpenEntry {
 	private name: string;
@@ -192,23 +188,19 @@ export class OpenSymbolHandler extends QuickOpenHandler {
 	}
 
 	private sort(searchValue: string, elementA: SymbolEntry, elementB: SymbolEntry): number {
-		let elementAName = elementA.getName().toLowerCase();
-		let elementBName = elementB.getName().toLowerCase();
-
-		// Compare by name
-		let r = strings.localeCompare(elementAName, elementBName);
-		if (r !== 0) {
-			return r;
-		}
 
 		// Sort by Type if name is identical
-		let elementAType = elementA.getType();
-		let elementBType = elementB.getType();
-		if (elementAType !== elementBType) {
-			return OpenSymbolHandler.SUPPORTED_OPEN_TYPES.indexOf(elementAType) < OpenSymbolHandler.SUPPORTED_OPEN_TYPES.indexOf(elementBType) ? -1 : 1;
+		let elementAName = elementA.getName().toLowerCase();
+		let elementBName = elementB.getName().toLowerCase();
+		if (elementAName === elementBName) {
+			let elementAType = elementA.getType();
+			let elementBType = elementB.getType();
+			if (elementAType !== elementBType) {
+				return OpenSymbolHandler.SUPPORTED_OPEN_TYPES.indexOf(elementAType) < OpenSymbolHandler.SUPPORTED_OPEN_TYPES.indexOf(elementBType) ? -1 : 1;
+			}
 		}
 
-		return 0; // Keep default sorting order otherwise
+		return QuickOpenEntry.compare(elementA, elementB, searchValue);
 	}
 
 	public getGroupLabel(): string {

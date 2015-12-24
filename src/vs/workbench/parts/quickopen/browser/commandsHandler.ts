@@ -13,12 +13,12 @@ import types = require('vs/base/common/types');
 import strings = require('vs/base/common/strings');
 import {IAction, Action} from 'vs/base/common/actions';
 import {toErrorMessage} from 'vs/base/common/errors';
-import {Mode, IContext, IAutoFocus} from 'vs/base/parts/quickopen/browser/quickOpen';
-import {QuickOpenEntryGroup, QuickOpenEntry, IHighlight, QuickOpenModel} from 'vs/base/parts/quickopen/browser/quickOpenModel';
+import {Mode, IContext, IAutoFocus} from 'vs/base/parts/quickopen/common/quickOpen';
+import {QuickOpenEntryGroup, IHighlight, QuickOpenModel} from 'vs/base/parts/quickopen/browser/quickOpenModel';
 import {SyncActionDescriptor, IActionsService} from 'vs/platform/actions/common/actions';
 import {IWorkbenchActionRegistry, Extensions as ActionExtensions} from 'vs/workbench/browser/actionRegistry';
 import {Registry} from 'vs/platform/platform';
-import {QuickOpenHandlerDescriptor, IQuickOpenRegistry, Extensions as QuickOpenExtensions, QuickOpenHandler} from 'vs/workbench/browser/quickopen';
+import {Extensions as QuickOpenExtensions, QuickOpenHandler} from 'vs/workbench/browser/quickopen';
 import {QuickOpenAction} from 'vs/workbench/browser/actions/quickOpenAction';
 import filters = require('vs/base/common/filters');
 import {ICommonCodeEditor, IEditorActionDescriptorData} from 'vs/editor/common/editorCommon';
@@ -28,16 +28,15 @@ import {IInstantiationService} from 'vs/platform/instantiation/common/instantiat
 import {IMessageService, Severity} from 'vs/platform/message/common/message';
 import {ITelemetryService} from 'vs/platform/telemetry/common/telemetry';
 import {IKeybindingService} from 'vs/platform/keybinding/common/keybindingService';
-import {KeybindingsUtils} from 'vs/platform/keybinding/common/keybindingsUtils';
-import {IQuickOpenService} from 'vs/workbench/services/quickopen/browser/quickOpenService';
-import {KeyMod, KeyCode} from 'vs/base/common/keyCodes';
+import {IQuickOpenService} from 'vs/workbench/services/quickopen/common/quickOpenService';
 
-const ACTION_ID = 'workbench.action.showCommands';
-const ACTION_LABEL = nls.localize('showTriggerActions', "Show All Commands");
-const ALL_COMMANDS_PREFIX = '>';
-const EDITOR_COMMANDS_PREFIX = '$';
+export const ALL_COMMANDS_PREFIX = '>';
+export const EDITOR_COMMANDS_PREFIX = '$';
 
 export class ShowAllCommandsAction extends QuickOpenAction {
+
+	public static ID = 'workbench.action.showCommands';
+	public static LABEL = nls.localize('showTriggerActions', "Show All Commands");
 
 	constructor(actionId: string, actionLabel: string, @IQuickOpenService quickOpenService: IQuickOpenService) {
 		super(actionId, actionLabel, ALL_COMMANDS_PREFIX, quickOpenService);
@@ -320,7 +319,6 @@ export class CommandsHandler extends QuickOpenHandler {
 	public getEmptyLabel(searchString: string): string {
 		return nls.localize('noCommandsMatching', "No commands matching");
 	}
-
 }
 
 export class EditorCommandsHandler extends CommandsHandler {
@@ -359,20 +357,3 @@ export class QuickCommandsEditorAction extends EditorAction {
 		return super.run();
 	}
 }
-
-// Register Action
-let registry = <IWorkbenchActionRegistry>Registry.as(ActionExtensions.WorkbenchActions);
-registry.registerWorkbenchAction(new SyncActionDescriptor(ShowAllCommandsAction, ACTION_ID, ACTION_LABEL, {
-	primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KEY_P,
-	secondary: [KeyCode.F1]
-}));
-
-// Register Quick Open Handler
-(<IQuickOpenRegistry>Registry.as(QuickOpenExtensions.Quickopen)).registerQuickOpenHandler(
-	new QuickOpenHandlerDescriptor(
-		'vs/workbench/parts/quickopen/browser/commandsHandler',
-		'CommandsHandler',
-		ALL_COMMANDS_PREFIX,
-		nls.localize('commandsHandlerDescriptionDefault', "Show and Run Commands")
-	)
-);

@@ -10,11 +10,8 @@ import URI from 'vs/base/common/uri';
 import EditorCommon = require('vs/editor/common/editorCommon');
 import Modes = require('vs/editor/common/modes');
 import lifecycle = require('vs/base/common/lifecycle');
-import objects = require('vs/base/common/objects');
-import types = require('vs/base/common/types');
 import async = require('vs/base/common/async');
 import supports = require('vs/editor/common/modes/supports');
-import services = require('vs/platform/services');
 import tokenization = require('vs/languages/typescript/common/features/tokenization');
 import quickFixMainActions = require('vs/languages/typescript/common/features/quickFixMainActions');
 import typescriptWorker = require('vs/languages/typescript/common/typescriptWorker2');
@@ -38,17 +35,17 @@ class SemanticValidator {
 	private _lastChangedResource: URI;
 	private _listener: { [r: string]: Function } = Object.create(null);
 
-	constructor(ctx: services.IServicesContext, mode: TypeScriptMode<any>) {
-		this._modelService = ctx['modelService'];
+	constructor(mode: TypeScriptMode<any>, @IModelService modelService: IModelService) {
+		this._modelService = modelService;
 		this._mode = mode;
 		this._validation = new async.RunOnceScheduler(this._doValidate.bind(this), 750);
 		if (this._modelService) {
-			this._modelService.onModelAdded.add(this._onModelAdded, this);
-			this._modelService.onModelRemoved.add(this._onModelRemoved, this);
-			this._modelService.onModelModeChanged.add((model, oldModeId) => {
+			this._modelService.onModelAdded(this._onModelAdded, this);
+			this._modelService.onModelRemoved(this._onModelRemoved, this);
+			this._modelService.onModelModeChanged(event => {
 				// Handle a model mode changed as a remove + add
-				this._onModelRemoved(model);
-				this._onModelAdded(model);
+				this._onModelRemoved(event.model);
+				this._onModelAdded(event.model);
 			}, this);
 			this._modelService.getModels().forEach(this._onModelAdded, this);
 		// } else {

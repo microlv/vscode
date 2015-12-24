@@ -884,6 +884,9 @@ declare namespace vscode {
 	 * A cancellation token is passed to an asynchronous or long running
 	 * operation to request cancellation, like cancelling a request
 	 * for completion items because the user continued to type.
+	 *
+	 * To get an instance of a `CancellationToken` use a
+	 * [CancellationTokenSource](#CancellationTokenSource).
 	 */
 	export interface CancellationToken {
 
@@ -2230,6 +2233,12 @@ declare namespace vscode {
 		message: string;
 
 		/**
+		 * A human-readable string describing the source of this
+		 * diagnostic, e.g. 'typescript' or 'super lint'.
+		 */
+		source: string;
+
+		/**
 		 * The severity, default is [error](#DiagnosticSeverity.Error).
 		 */
 		severity: DiagnosticSeverity;
@@ -2353,8 +2362,9 @@ declare namespace vscode {
 		 * Reveal this channel in the UI.
 		 *
 		 * @param column The column in which to show the channel, default in [one](#ViewColumn.One).
+		 * @param preserveFocus When `true` the channel will not take focus.
 		 */
-		show(column?: ViewColumn): void;
+		show(column?: ViewColumn, preserveFocus?: boolean): void;
 
 		/**
 		 * Hide this channel from the UI.
@@ -2648,11 +2658,13 @@ declare namespace vscode {
 		export function executeCommand<T>(command: string, ...rest: any[]): Thenable<T>;
 
 		/**
-		 * Retrieve the list of all available commands.
+		 * Retrieve the list of all available commands. Commands starting an underscore are
+		 * treated as internal commands.
 		 *
+		 * @param filterInternal Set `true` to not see internal commands (starting with an underscore)
 		 * @return Thenable that resolves to a list of command ids.
 		 */
-		export function getCommands(): Thenable<string[]>;
+		export function getCommands(filterInternal?: boolean): Thenable<string[]>;
 	}
 
 	/**
@@ -2697,9 +2709,10 @@ declare namespace vscode {
 		 * @param document A text document to be shown.
 		 * @param column A view column in which the editor should be shown. The default is the [one](#ViewColumn.One), other values
 		 * are adjusted to be __Min(column, columnCount + 1)__.
+		 * @param preserveFocus When `true` the editor will not take focus.
 		 * @return A promise that resolves to an [editor](#TextEditor).
 		 */
-		export function showTextDocument(document: TextDocument, column?: ViewColumn): Thenable<TextEditor>;
+		export function showTextDocument(document: TextDocument, column?: ViewColumn, preserveFocus?: boolean): Thenable<TextEditor>;
 
 		/**
 		 * Create a TextEditorDecorationType that can be used to add decorations to text editors.
@@ -2715,8 +2728,7 @@ declare namespace vscode {
 		 *
 		 * @param message The message to show.
 		 * @param items A set of items that will be rendered as actions in the message.
-		 * @return A thenable that resolves to the selected item or `undefined`. The thenable will be rejected
-		 * when the message was dismissed.
+		 * @return A thenable that resolves to the selected item or `undefined` when being dismissed.
 		 */
 		export function showInformationMessage(message: string, ...items: string[]): Thenable<string>;
 
@@ -2727,8 +2739,7 @@ declare namespace vscode {
 		 *
 		 * @param message The message to show.
 		 * @param items A set of items that will be rendered as actions in the message.
-		 * @return A thenable that resolves to the selected item or `undefined`. The thenable will be rejected
-		 * when the message was dismissed.
+		 * @return A thenable that resolves to the selected item or `undefined` when being dismissed.
 		 */
 		export function showInformationMessage<T extends MessageItem>(message: string, ...items: T[]): Thenable<T>;
 
@@ -2739,8 +2750,7 @@ declare namespace vscode {
 		 *
 		 * @param message The message to show.
 		 * @param items A set of items that will be rendered as actions in the message.
-		 * @return A thenable that resolves to the selected item or `undefined`. The thenable will be rejected
-		 * when the message was dismissed.
+		 * @return A thenable that resolves to the selected item or `undefined` when being dismissed.
 		 */
 		export function showWarningMessage(message: string, ...items: string[]): Thenable<string>;
 
@@ -2751,8 +2761,7 @@ declare namespace vscode {
 		 *
 		 * @param message The message to show.
 		 * @param items A set of items that will be rendered as actions in the message.
-		 * @return A thenable that resolves to the selected item or `undefined`. The thenable will be rejected
-		 * when the message was dismissed.
+		 * @return A thenable that resolves to the selected item or `undefined` when being dismissed.
 		 */
 		export function showWarningMessage<T extends MessageItem>(message: string, ...items: T[]): Thenable<T>;
 
@@ -2763,8 +2772,7 @@ declare namespace vscode {
 		 *
 		 * @param message The message to show.
 		 * @param items A set of items that will be rendered as actions in the message.
-		 * @return A thenable that resolves to the selected item or `undefined`. The thenable will be rejected
-		 * when the message was dismissed.
+		 * @return A thenable that resolves to the selected item or `undefined` when being dismissed.
 		 */
 		export function showErrorMessage(message: string, ...items: string[]): Thenable<string>;
 
@@ -2775,8 +2783,7 @@ declare namespace vscode {
 		 *
 		 * @param message The message to show.
 		 * @param items A set of items that will be rendered as actions in the message.
-		 * @return A thenable that resolves to the selected item or `undefined`. The thenable will be rejected
-		 * when the message was dismissed.
+		 * @return A thenable that resolves to the selected item or `undefined` when being dismissed.
 		 */
 		export function showErrorMessage<T extends MessageItem>(message: string, ...items: T[]): Thenable<T>;
 
@@ -2939,9 +2946,10 @@ declare namespace vscode {
 		 * @param include A glob pattern that defines the files to search for.
 		 * @param exclude A glob pattern that defines files and folders to exclude.
 		 * @param maxResults An upper-bound for the result.
+		 * @param token A token that can be used to signal cancellation to the underlying search engine.
 		 * @return A thenable that resolves to an array of resource identifiers.
 		 */
-		export function findFiles(include: string, exclude: string, maxResults?: number): Thenable<Uri[]>;
+		export function findFiles(include: string, exclude: string, maxResults?: number, token?: CancellationToken): Thenable<Uri[]>;
 
 		/**
 		 * Save all dirty files.

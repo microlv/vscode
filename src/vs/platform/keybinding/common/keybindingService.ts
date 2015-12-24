@@ -5,8 +5,10 @@
 'use strict';
 
 import {TPromise} from 'vs/base/common/winjs.base';
+import {TypeConstraint} from 'vs/base/common/types';
 import {createDecorator, IInstantiationService, ServiceIdentifier, ServicesAccessor} from 'vs/platform/instantiation/common/instantiation';
 import {Keybinding} from 'vs/base/common/keyCodes';
+import {IHTMLContentElement} from 'vs/base/common/htmlContent';
 
 export interface IUserFriendlyKeybinding {
 	key: string;
@@ -53,6 +55,13 @@ export interface IKeybindingItem {
 
 export interface ICommandHandler {
 	(accessor: ServicesAccessor, args: any): void;
+	description?: string | ICommandHandlerDescription;
+}
+
+export interface ICommandHandlerDescription {
+	description: string;
+	args: { name: string; description?: string; constraint?: TypeConstraint; }[];
+	returns?: string;
 }
 
 export interface ICommandsMap {
@@ -84,6 +93,8 @@ export interface IKeybindingService {
 	customKeybindingsCount(): number;
 
 	getLabelFor(keybinding:Keybinding): string;
+	getHTMLLabelFor(keybinding:Keybinding): IHTMLContentElement[];
+	getElectronAcceleratorFor(keybinding:Keybinding): string;
 
 	executeCommand<T>(commandId: string, args?: any): TPromise<T>;
 	executeCommand(commandId: string, args?: any): TPromise<any>;

@@ -9,9 +9,7 @@ import * as assert from 'assert';
 import {setUnexpectedErrorHandler, errorHandler} from 'vs/base/common/errors';
 import {create} from 'vs/base/common/types';
 import URI from 'vs/base/common/uri';
-import {TPromise} from 'vs/base/common/winjs.base';
-import {PluginHostDocument} from 'vs/workbench/api/common/pluginHostDocuments';
-import * as types from 'vs/workbench/api/common/pluginHostTypes';
+import * as types from 'vs/workbench/api/common/extHostTypes';
 import {Range as CodeEditorRange} from 'vs/editor/common/core/range';
 import * as EditorCommon from 'vs/editor/common/editorCommon';
 import {Model as EditorModel} from 'vs/editor/common/model/model';
@@ -21,16 +19,14 @@ import {MarkerService} from 'vs/platform/markers/common/markerService';
 import {IMarkerService} from 'vs/platform/markers/common/markers';
 import {IThreadService} from 'vs/platform/thread/common/thread';
 import {ExtHostLanguageFeatures, MainThreadLanguageFeatures} from 'vs/workbench/api/common/extHostLanguageFeatures';
-import {PluginHostCommands, MainThreadCommands} from 'vs/workbench/api/common/pluginHostCommands';
-import {PluginHostModelService} from 'vs/workbench/api/common/pluginHostDocuments';
-import {SyncDescriptor0} from 'vs/platform/instantiation/common/descriptors';
-import {LanguageSelector} from 'vs/editor/common/modes/languageSelector';
+import {ExtHostCommands, MainThreadCommands} from 'vs/workbench/api/common/extHostCommands';
+import {ExtHostModelService} from 'vs/workbench/api/common/extHostDocuments';
 import {OutlineRegistry, getOutlineEntries} from 'vs/editor/contrib/quickOpen/common/quickOpen';
-import {CodeLensRegistry, getCodeLensData} from 'vs/editor/contrib/codelens/common/codelens';
-import {DeclarationRegistry, getDeclarationsAtPosition} from 'vs/editor/contrib/goToDeclaration/common/goToDeclaration';
-import {ExtraInfoRegistry, getExtraInfoAtPosition} from 'vs/editor/contrib/hover/common/hover';
-import {OccurrencesRegistry, getOccurrencesAtPosition} from 'vs/editor/contrib/wordHighlighter/common/wordHighlighter';
-import {ReferenceRegistry, findReferences} from 'vs/editor/contrib/referenceSearch/common/referenceSearch';
+import {getCodeLensData} from 'vs/editor/contrib/codelens/common/codelens';
+import {getDeclarationsAtPosition} from 'vs/editor/contrib/goToDeclaration/common/goToDeclaration';
+import {getExtraInfoAtPosition} from 'vs/editor/contrib/hover/common/hover';
+import {getOccurrencesAtPosition} from 'vs/editor/contrib/wordHighlighter/common/wordHighlighter';
+import {findReferences} from 'vs/editor/contrib/referenceSearch/common/referenceSearch';
 import {getQuickFixes} from 'vs/editor/contrib/quickFix/common/quickFix';
 import {getNavigateToItems} from 'vs/workbench/parts/search/common/search';
 import {rename} from 'vs/editor/contrib/rename/common/rename';
@@ -65,7 +61,7 @@ suite('ExtHostLanguageFeatures', function() {
 		originalErrorHandler = errorHandler.getUnexpectedErrorHandler();
 		setUnexpectedErrorHandler(() => { });
 
-		threadService.getRemotable(PluginHostModelService)._acceptModelAdd({
+		threadService.getRemotable(ExtHostModelService)._acceptModelAdd({
 			isDirty: false,
 			versionId: model.getVersionId(),
 			modeId: model.getModeId(),
@@ -78,7 +74,7 @@ suite('ExtHostLanguageFeatures', function() {
 			},
 		});
 
-		threadService.getRemotable(PluginHostCommands);
+		threadService.getRemotable(ExtHostCommands);
 		threadService.getRemotable(MainThreadCommands);
 		mainThread = threadService.getRemotable(MainThreadLanguageFeatures);
 		extHost = threadService.getRemotable(ExtHostLanguageFeatures);
@@ -168,7 +164,7 @@ suite('ExtHostLanguageFeatures', function() {
 	test('CodeLens, evil provider', function(done) {
 
 		disposables.push(extHost.registerCodeLensProvider(defaultSelector, <vscode.CodeLensProvider>{
-			provideCodeLenses():any {
+			provideCodeLenses(): any {
 				throw new Error('evil')
 			}
 		}));
@@ -189,12 +185,12 @@ suite('ExtHostLanguageFeatures', function() {
 	test('CodeLens, do not resolve a resolved lens', function(done) {
 
 		disposables.push(extHost.registerCodeLensProvider(defaultSelector, <vscode.CodeLensProvider>{
-			provideCodeLenses():any {
+			provideCodeLenses(): any {
 				return [new types.CodeLens(
 					new types.Range(0, 0, 0, 0),
 					{ command: 'id', title: 'Title' })];
 			},
-			resolveCodeLens():any {
+			resolveCodeLens(): any {
 				assert.ok(false, 'do not resolve');
 			}
 		}));
@@ -636,7 +632,7 @@ suite('ExtHostLanguageFeatures', function() {
 
 	test('Quick Fix, invoke command+args', function(done) {
 		let actualArgs: any;
-		let commands = threadService.getRemotable(PluginHostCommands);
+		let commands = threadService.getRemotable(ExtHostCommands);
 		disposables.push(commands.registerCommand('test1', function(...args: any[]) {
 			actualArgs = args;
 		}));
@@ -957,6 +953,27 @@ suite('ExtHostLanguageFeatures', function() {
 			});
 		});
 	})
+
+	test('Format Range, + format_doc', function(done) {
+		disposables.push(extHost.registerDocumentRangeFormattingEditProvider(defaultSelector, <vscode.DocumentRangeFormattingEditProvider>{
+			provideDocumentRangeFormattingEdits(): any {
+				return [new types.TextEdit(new types.Range(0, 0, 1, 1), 'range')];
+			}
+		}));
+		disposables.push(extHost.registerDocumentFormattingEditProvider(defaultSelector, <vscode.DocumentFormattingEditProvider>{
+			provideDocumentFormattingEdits(): any {
+				return [new types.TextEdit(new types.Range(0, 0, 1, 1), 'doc')];
+			}
+		}));
+		threadService.sync().then(() => {
+			formatRange(model, { startLineNumber: 1, startColumn: 1, endLineNumber: 1, endColumn: 1 }, { insertSpaces: true, tabSize: 4 }).then(value => {
+				assert.equal(value.length, 1);
+				let [first] = value;
+				assert.equal(first.text, 'range');
+				done();
+			});
+		});
+	});
 
 	test('Format Range, evil provider', function(done) {
 		disposables.push(extHost.registerDocumentRangeFormattingEditProvider(defaultSelector, <vscode.DocumentRangeFormattingEditProvider>{

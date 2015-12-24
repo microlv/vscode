@@ -8,7 +8,7 @@ import {IPluginDescription, IPointListener, IActivationEventListener, IMessage} 
 import {Registry} from 'vs/platform/platform';
 import Errors = require('vs/base/common/errors');
 import env = require('vs/base/common/flags');
-import * as JSONContributionRegistry from 'vs/languages/json/common/jsonContributionRegistry';
+import * as JSONContributionRegistry from 'vs/platform/jsonschemas/common/jsonContributionRegistry';
 import {IJSONSchema} from 'vs/base/common/jsonSchema';
 import nls = require('vs/nls');
 import paths = require('vs/base/common/paths');
@@ -148,6 +148,10 @@ export function isValidPluginDescription(extensionFolderPath: string, pluginDesc
 	}
 	if (typeof pluginDescription.name !== 'string') {
 		notices.push(nls.localize('pluginDescription.name', "property `{0}` is mandatory and must be of type `string`", 'name'));
+		return false;
+	}
+	if (typeof pluginDescription.version !== 'string') {
+		notices.push(nls.localize('pluginDescription.version', "property `{0}` is mandatory and must be of type `string`", 'version'));
 		return false;
 	}
 	if (!pluginDescription.engines) {

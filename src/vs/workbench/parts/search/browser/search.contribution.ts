@@ -6,7 +6,6 @@
 'use strict';
 
 import 'vs/css!./media/search.contribution';
-import env = require('vs/base/common/platform');
 import {Registry} from 'vs/platform/platform';
 import {IViewletRegistry, Extensions as ViewletExtensions, ViewletDescriptor, ToggleViewletAction} from 'vs/workbench/browser/viewlet';
 import {IConfigurationRegistry, Extensions as ConfigurationExtensions} from 'vs/platform/configuration/common/configurationRegistry';
@@ -24,7 +23,7 @@ import {IInstantiationService} from 'vs/platform/instantiation/common/instantiat
 import {AsyncDescriptor} from 'vs/platform/instantiation/common/descriptors';
 import {IWorkspaceContextService} from 'vs/platform/workspace/common/workspace';
 import {IKeybindings} from 'vs/platform/keybinding/common/keybindingService';
-import {IQuickOpenService} from 'vs/workbench/services/quickopen/browser/quickOpenService';
+import {IQuickOpenService} from 'vs/workbench/services/quickopen/common/quickOpenService';
 import {IViewletService} from 'vs/workbench/services/viewlet/common/viewletService';
 import {IWorkbenchEditorService} from 'vs/workbench/services/editor/common/editorService';
 import {KeyMod, KeyCode} from 'vs/base/common/keyCodes';
@@ -36,8 +35,8 @@ KeybindingsRegistry.registerCommandDesc({
 	weight: KeybindingsRegistry.WEIGHT.workbenchContrib(),
 	context: [{ key: 'searchViewletVisible' }],
 	primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.KEY_J,
-	handler: ctx => {
-		let viewletService = <IViewletService>ctx['viewletService'];
+	handler: accessor => {
+		let viewletService = accessor.get(IViewletService);
 		viewletService.openViewlet(VIEWLET_ID, true)
 			.then(viewlet => (<any>viewlet).toggleFileTypes());
 	}
@@ -197,6 +196,11 @@ configurationRegistry.registerConfiguration({
 					}
 				]
 			}
+		},
+		'filePicker.alternateFileNameMatching': {
+			'type': 'boolean',
+			'default': false,
+			'description': nls.localize('enableFuzzy', "Experimental support for fuzzy matching of file names in the file picker.")
 		}
 	}
 });

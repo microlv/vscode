@@ -18,19 +18,20 @@ import Storage = require('vs/workbench/browser/storage');
 import WorkbenchEditorCommon = require('vs/workbench/common/editor');
 import Viewlet = require('vs/workbench/browser/viewlet');
 import InstantiationService = require('vs/platform/instantiation/common/instantiationService');
+import Event, {Emitter} from 'vs/base/common/event';
 import LifecycleService = require('vs/platform/lifecycle/common/baseLifecycleService');
 import Types = require('vs/base/common/types');
 import Mime = require('vs/base/common/mime');
-import {EventProvider} from 'vs/base/common/eventProvider';
 import Assert = require('vs/base/common/assert');
 import Severity from 'vs/base/common/severity';
 import Arrays = require('vs/base/common/arrays');
 import Errors = require('vs/base/common/errors');
 import http = require('vs/base/common/http');
+import {IConfigurationService} from 'vs/platform/configuration/common/configuration';
 import {IStorageService, StorageScope} from 'vs/platform/storage/common/storage';
 import UntitledEditorService = require('vs/workbench/services/untitled/browser/untitledEditorService');
 import WorkbenchEditorService = require('vs/workbench/services/editor/common/editorService');
-import QuickOpenService = require('vs/workbench/services/quickopen/browser/quickOpenService');
+import QuickOpenService = require('vs/workbench/services/quickopen/common/quickOpenService');
 import ViewletService = require('vs/workbench/services/viewlet/common/viewletService');
 import PartService = require('vs/workbench/services/part/common/partService');
 import WorkspaceContextService = require('vs/workbench/services/workspace/common/contextService');
@@ -40,6 +41,7 @@ import {BaseWorkspaceContextService} from 'vs/platform/workspace/common/baseWork
 import {IEditorInput, IEditorModel, IEditorOptions, ITextInput, Position, IEditor, IResourceInput, ITextEditorModel} from 'vs/platform/editor/common/editor';
 import {IEventService} from 'vs/platform/event/common/event';
 import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
+import {IUntitledEditorService} from 'vs/workbench/services/untitled/common/untitledEditorService';
 import {IMessageService, IConfirmation} from 'vs/platform/message/common/message';
 import Lifecycle = require('vs/base/common/lifecycle');
 import {IRequestService} from 'vs/platform/request/common/request';
@@ -48,6 +50,7 @@ import {ITelemetryService, ITelemetryInfo} from 'vs/platform/telemetry/common/te
 import {IWorkspaceContextService, IWorkspace, IConfiguration} from 'vs/platform/workspace/common/workspace';
 import {IKeybindingService, IKeybindingContextKey, IKeybindingItem} from 'vs/platform/keybinding/common/keybindingService';
 import {Keybinding} from 'vs/base/common/keyCodes';
+import {IHTMLContentElement} from 'vs/base/common/htmlContent';
 
 export const TestWorkspace: IWorkspace = {
 	resource: URI.file('C:\\testWorkspace'),
@@ -71,7 +74,11 @@ export class TestContextService implements WorkspaceContextService.IWorkspaceCon
 	constructor(workspace: any = TestWorkspace, configuration: any = TestConfiguration, options: any = null) {
 		this.workspace = workspace;
 		this.configuration = configuration;
-		this.options = options;
+		this.options = options || {
+			globalSettings: {
+				settings: {}
+			}
+		};
 	}
 
 	public getWorkspace(): IWorkspace {
@@ -161,6 +168,14 @@ export class TestKeybindingService implements IKeybindingService {
 
 	public getLabelFor(keybinding:Keybinding): string {
 		return keybinding._toUSLabel();
+	}
+
+	public getHTMLLabelFor(keybinding:Keybinding): IHTMLContentElement[] {
+		return keybinding._toUSHTMLLabel();
+	}
+
+	public getElectronAcceleratorFor(keybinding:Keybinding): string {
+		return keybinding._toElectronAccelerator();
 	}
 
 	public createScoped(domNode: HTMLElement): IKeybindingService {
@@ -341,8 +356,8 @@ export class MockRequestService extends BaseRequestService {
 	}
 }
 
-export class TestUntitledEditorService implements UntitledEditorService.IUntitledEditorService {
-	public serviceId = UntitledEditorService.IUntitledEditorService;
+export class TestUntitledEditorService implements IUntitledEditorService {
+	public serviceId = IUntitledEditorService;
 
 	public get(resource: URI) {
 		return null;
@@ -466,7 +481,7 @@ export class TestQuickOpenService implements QuickOpenService.IQuickOpenService 
 
 	private callback: (prefix: string) => void;
 
-	constructor(callback: (prefix: string) => void) {
+	constructor(callback?: (prefix: string) => void) {
 		this.callback = callback;
 	}
 
@@ -483,7 +498,7 @@ export class TestQuickOpenService implements QuickOpenService.IQuickOpenService 
 	}
 
 	show(prefix?: string, quickNavigateConfiguration?: any): Promise {
-		this.callback(prefix);
+		this.callback && this.callback(prefix);
 
 		return Promise.as(true);
 	}
@@ -492,11 +507,11 @@ export class TestQuickOpenService implements QuickOpenService.IQuickOpenService 
 		return [];
 	}
 
-	get onShow(): EventProvider<() => void> {
+	get onShow(): Event<void> {
 		return null;
 	}
 
-	get onHide(): EventProvider<() => void> {
+	get onHide(): Event<void> {
 		return null;
 	}
 
@@ -529,5 +544,17 @@ export const TestFileService = {
 				name: Paths.basename(res.fsPath)
 			};
 		});
+	}
+}
+
+export class TestConfigurationService extends EventEmitter.EventEmitter implements IConfigurationService {
+	public serviceId = IConfigurationService;
+
+	public loadConfiguration(section?:string):TPromise<any> {
+		return TPromise.as({});
+	}
+
+	public hasWorkspaceConfiguration():boolean {
+		return false;
 	}
 }
