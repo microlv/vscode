@@ -9,6 +9,7 @@ import ee = require('vs/base/common/eventEmitter');
 import severity from 'vs/base/common/severity';
 import { createDecorator, ServiceIdentifier } from 'vs/platform/instantiation/common/instantiation';
 import editor = require('vs/editor/common/editorCommon');
+import editorbrowser = require('vs/editor/browser/editorBrowser');
 import { Source } from 'vs/workbench/parts/debug/common/debugSource';
 
 export var VIEWLET_ID = 'workbench.view.debug';
@@ -21,7 +22,7 @@ export interface IRawModelUpdate {
 	threadId: number;
 	thread?: DebugProtocol.Thread;
 	callStack?: DebugProtocol.StackFrame[];
-	exception?: boolean;
+	stoppedReason?: string;
 }
 
 // model
@@ -44,7 +45,7 @@ export interface IThread extends ITreeElement {
 	threadId: number;
 	name: string;
 	callStack: IStackFrame[];
-	exception: boolean;
+	stoppedReason: string;
 }
 
 export interface IScope extends IExpressionContainer {
@@ -127,7 +128,7 @@ export interface IViewModel extends ee.EventEmitter {
 }
 
 export interface IModel extends ee.IEventEmitter, ITreeElement {
-	getThreads(): { [reference: number]: IThread; };
+	getThreads(): { [threadId: number]: IThread; };
 	getBreakpoints(): IBreakpoint[];
 	areBreakpointsActivated(): boolean;
 	getFunctionBreakpoints(): IFunctionBreakpoint[];
@@ -230,6 +231,7 @@ export interface IDebugService extends ee.IEventEmitter {
 	toggleBreakpointsActivated(): Promise;
 	removeAllBreakpoints(): Promise;
 	sendAllBreakpoints(): Promise;
+	editBreakpoint(editor: editorbrowser.ICodeEditor, lineNumber: number): Promise;
 
 	addFunctionBreakpoint(functionName?: string): Promise;
 	renameFunctionBreakpoint(id: string, newFunctionName: string): Promise;

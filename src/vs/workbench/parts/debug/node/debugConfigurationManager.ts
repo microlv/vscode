@@ -6,6 +6,7 @@
 import path = require('path');
 import nls = require('vs/nls');
 import { Promise, TPromise } from 'vs/base/common/winjs.base';
+import objects = require('vs/base/common/objects');
 import uri from 'vs/base/common/uri';
 import { schemas } from 'vs/base/common/network';
 import paths = require('vs/base/common/paths');
@@ -236,7 +237,7 @@ export class ConfigurationManager {
 			const filtered = name ? config.configurations.filter(cfg => cfg.name === name) : [config.configurations[0]];
 
 			// massage configuration attributes - append workspace path to relatvie paths, substitute variables in paths.
-			this.configuration = filtered.length === 1 ? filtered[0] : null;
+			this.configuration = filtered.length === 1 ? objects.deepClone(filtered[0]) : null;
 			if (this.configuration) {
 				if (this.systemVariables) {
 					Object.keys(this.configuration).forEach(key => {
@@ -250,7 +251,7 @@ export class ConfigurationManager {
 				this.configuration.program = this.resolvePath(this.configuration.program, silent);
 				this.configuration.stopOnEntry = this.configuration.stopOnEntry === undefined ? false : this.configuration.stopOnEntry;
 				this.configuration.args = this.configuration.args && this.configuration.args.length > 0 ? this.systemVariables.resolve(this.configuration.args) : null;
-				this.configuration.cwd = this.resolvePath(this.configuration.cwd || '.', silent);
+				this.configuration.cwd = this.resolvePath(this.configuration.cwd || '.', true);
 				this.configuration.runtimeExecutable = this.resolvePath(this.configuration.runtimeExecutable, silent);
 				this.configuration.runtimeArgs = this.configuration.runtimeArgs && this.configuration.runtimeArgs.length > 0 ? this.configuration.runtimeArgs : null;
 			}

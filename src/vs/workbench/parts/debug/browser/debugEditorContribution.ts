@@ -13,7 +13,7 @@ import { KeyCode } from 'vs/base/common/keyCodes';
 import keyboard = require('vs/base/browser/keyboardEvent');
 import editorbrowser = require('vs/editor/browser/editorBrowser');
 import editorcommon = require('vs/editor/common/editorCommon');
-import { DebugHoverWidget } from 'vs/workbench/parts/debug/browser/debugHoverWidget';
+import { DebugHoverWidget } from 'vs/workbench/parts/debug/browser/debugHover';
 import debugactions = require('vs/workbench/parts/debug/electron-browser/debugActions');
 import debug = require('vs/workbench/parts/debug/common/debug');
 import { IWorkspaceContextService } from 'vs/workbench/services/workspace/common/contextService';
@@ -37,7 +37,7 @@ export class DebugEditorContribution implements editorcommon.IEditorContribution
 	) {
 		this.breakpointHintDecoration = [];
 		this.toDispose = [];
-		this.hoverWidget = new DebugHoverWidget(this.editor, this.debugService);
+		this.hoverWidget = new DebugHoverWidget(this.editor, this.debugService, this.instantiationService);
 		this.registerListeners();
 	}
 
@@ -45,6 +45,7 @@ export class DebugEditorContribution implements editorcommon.IEditorContribution
 		const actions = [];
 		if (breakpoint) {
 			actions.push(this.instantiationService.createInstance(debugactions.RemoveBreakpointAction, debugactions.RemoveBreakpointAction.ID, debugactions.RemoveBreakpointAction.LABEL));
+			actions.push(this.instantiationService.createInstance(debugactions.EditConditionalBreakpointAction, debugactions.EditConditionalBreakpointAction.ID, debugactions.EditConditionalBreakpointAction.LABEL, this.editor, lineNumber));
 			actions.push(this.instantiationService.createInstance(debugactions.ToggleEnablementAction, debugactions.ToggleEnablementAction.ID, debugactions.ToggleEnablementAction.LABEL));
 		} else {
 			actions.push(new Action(
@@ -54,6 +55,7 @@ export class DebugEditorContribution implements editorcommon.IEditorContribution
 				true,
 				() =>  this.debugService.toggleBreakpoint({ uri, lineNumber })
 			));
+			actions.push(this.instantiationService.createInstance(debugactions.AddConditionalBreakpointAction, debugactions.AddConditionalBreakpointAction.ID, debugactions.AddConditionalBreakpointAction.LABEL, this.editor, lineNumber));
 		}
 
 		return TPromise.as(actions);
@@ -146,7 +148,7 @@ export class DebugEditorContribution implements editorcommon.IEditorContribution
 	// hover business
 
 	private onEditorMouseDown(mouseEvent: editorbrowser.IMouseEvent): void {
-		if (mouseEvent.target.type === editorcommon.MouseTargetType.CONTENT_WIDGET && mouseEvent.target.detail === DebugHoverWidget.ID) {
+		if (mouseEvent.target.type === editorcommon.MouseTargetType.OVERLAY_WIDGET && mouseEvent.target.detail === DebugHoverWidget.ID) {
 			return;
 		}
 
@@ -161,8 +163,8 @@ export class DebugEditorContribution implements editorcommon.IEditorContribution
 		const targetType = mouseEvent.target.type;
 		const stopKey = env.isMacintosh ? 'metaKey' : 'ctrlKey';
 
-		if (targetType === editorcommon.MouseTargetType.CONTENT_WIDGET && mouseEvent.target.detail === DebugHoverWidget.ID && !(<any>mouseEvent.event)[stopKey]) {
-			// mouse moved on top of content hover widget
+		if (targetType === editorcommon.MouseTargetType.OVERLAY_WIDGET && mouseEvent.target.detail === DebugHoverWidget.ID && !(<any>mouseEvent.event)[stopKey]) {
+			// mouse moved on top of debug hover widget
 			return;
 		}
 

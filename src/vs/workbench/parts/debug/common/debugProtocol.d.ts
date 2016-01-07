@@ -50,7 +50,14 @@ declare module DebugProtocol {
 	//---- Events
 
 	/** Event message for "initialized" event type.
-		The event indicates that the debugee is ready to accept SetBreakpoint calls.
+		This event indicates that the debug adapter is ready to accept configuration requests (e.g. SetBreakpointsRequest, SetExceptionBreakpointsRequest).
+		A debug adapter is expected to send this event when it is ready to accept configuration requests.
+		The sequence of events/requests is as follows:
+		- adapters sends InitializedEvent (at any time)
+		- frontend sends zero or more SetBreakpointsRequest
+		- frontend sends one SetExceptionBreakpointsRequest (in the future 'zero or one')
+		- frontend sends other configuration requests that are added in the future
+		- frontend sends one ConfigurationDoneRequest
 	*/
 	export interface InitializedEvent extends Event {
 	}
@@ -141,6 +148,20 @@ declare module DebugProtocol {
 	export interface InitializeResponse extends Response {
 	}
 
+	/** ConfigurationDone request; value of command field is "configurationDone".
+		The client of the debug protocol must send this request at the end of the sequence of configuration requests (which was started by the InitializedEvent)
+	*/
+	export interface ConfigurationDoneRequest extends Request {
+		arguments?: ConfigurationDoneArguments;
+	}
+	/** Arguments for "configurationDone" request. */
+	export interface ConfigurationDoneArguments {
+		/* The configurationDone request has no standardized attributes. */
+	}
+	/** Response to "configurationDone" request. This is just an acknowledgement, so no body field is required. */
+	export interface ConfigurationDoneResponse extends Response {
+	}
+
 	/** Launch request; value of command field is "launch".
 	*/
 	export interface LaunchRequest extends Request {
@@ -191,8 +212,10 @@ declare module DebugProtocol {
 	export interface SetBreakpointsArguments {
 		/** The source location of the breakpoints; either source.path or source.reference must be specified. */
 		source: Source;
-		/** The code locations of the breakpoints */
-		lines: number[];
+		/** The code locations of the breakpoints. */
+    	breakpoints?: SourceBreakpoint[];
+        /** Deprecated: The code locations of the breakpoints. */
+        lines?: number[];
 	}
 	/** Response to "setBreakpoints" request.
 		Returned is information about each breakpoint created by this request.
@@ -442,7 +465,7 @@ declare module DebugProtocol {
 		name: string;
 	}
 
-	/** A Source .*/
+    /** A Source is a descriptor for source code. It is returned from the debug adapter as part of a StackFrame and it is used by clients when specifying breakpoints. */
 	export interface Source {
 		/** The short name of the source. Every source returned from the debug adapter has a name. When specifying a source to the debug adapter this name is optional. */
 		name?: string;
@@ -450,8 +473,10 @@ declare module DebugProtocol {
 		path?: string;
 		/** If sourceReference > 0 the contents of the source can be retrieved through the SourceRequest. A sourceReference is only valid for a session, so it must not be used to persist a source. */
 		sourceReference?: number;
-        /** The (optional) origin of this source: possible values "internal module", "inlined content from source map" */
-        origin?: string;
+ 		/** The (optional) origin of this source: possible values "internal module", "inlined content from source map", etc. */
+		origin?: string;
+		/** Optional data that a debug adapter might want to loop through the client. The client should leave the data intact and persist it across sessions. The client should not interpret the data. */
+		adapterData?: any;
 	}
 
 	/** A Stackframe contains the source location. */
@@ -489,6 +514,17 @@ declare module DebugProtocol {
 		/** If variablesReference is > 0, the variable is structured and its children can be retrieved by passing variablesReference to the VariablesRequest. */
 		variablesReference: number;
 	}
+
+    /** Properties of a breakpoint passed to the setBreakpoints request.
+    */
+    export interface SourceBreakpoint {
+        /** The source line of the breakpoint. */
+        line: number;
+        /** An optional source column of the breakpoint. */
+        column?: number;
+        /** An optional expression for conditional breakpoints. */
+        condition?: string;
+    }
 
 	/** Information about a Breakpoint created in the setBreakpoints request.
 	*/

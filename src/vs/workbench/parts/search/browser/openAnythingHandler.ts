@@ -21,12 +21,20 @@ import {IAutoFocus} from 'vs/base/parts/quickopen/common/quickOpen';
 import {QuickOpenEntry, QuickOpenModel} from 'vs/base/parts/quickopen/browser/quickOpenModel';
 import {QuickOpenHandler} from 'vs/workbench/browser/quickopen';
 import {FileEntry, OpenFileHandler} from 'vs/workbench/parts/search/browser/openFileHandler';
-import {OpenSymbolHandler} from 'vs/workbench/parts/search/browser/openSymbolHandler';
+import * as openSymbolHandler from 'vs/workbench/parts/search/browser/openSymbolHandler';
 import {IMessageService, Severity} from 'vs/platform/message/common/message';
 import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
 import {IWorkspaceContextService} from 'vs/workbench/services/workspace/common/contextService';
 import {ISearchConfiguration} from 'vs/platform/search/common/search';
 import {IConfigurationService, IConfigurationServiceEvent, ConfigurationServiceEventTypes} from 'vs/platform/configuration/common/configuration';
+
+interface ISearchWithRange {
+	search: string;
+	range: IRange;
+}
+
+// OpenSymbolHandler is used from an extension and must be in the main bundle file so it can load
+export import OpenSymbolHandler = openSymbolHandler.OpenSymbolHandler;
 
 export class OpenAnythingHandler extends QuickOpenHandler {
 	private static LINE_COLON_PATTERN = /[#|:](\d*)([#|:](\d*))?$/;
@@ -100,16 +108,13 @@ export class OpenAnythingHandler extends QuickOpenHandler {
 		}
 
 		// Find a suitable range from the pattern looking for ":" and "#"
-		let range = this.findRange(searchValue);
-		if (range) {
-			let rangePrefix = searchValue.indexOf('#') >= 0 ? searchValue.indexOf('#') : searchValue.indexOf(':');
-			if (rangePrefix >= 0) {
-				searchValue = searchValue.substring(0, rangePrefix);
-			}
+		let searchWithRange = this.extractRange(searchValue);
+		if (searchWithRange) {
+			searchValue = searchWithRange.search; // ignore range portion in query
 		}
 
 		// Check Cache first
-		let cachedResults = this.getResultsFromCache(searchValue, range);
+		let cachedResults = this.getResultsFromCache(searchValue, searchWithRange ? searchWithRange.range : null);
 		if (cachedResults) {
 			return TPromise.as(new QuickOpenModel(cachedResults));
 		}
@@ -120,7 +125,7 @@ export class OpenAnythingHandler extends QuickOpenHandler {
 
 			// Symbol Results (unless a range is specified)
 			let resultPromises: TPromise<QuickOpenModel>[] = [];
-			if (!range) {
+			if (!searchWithRange) {
 				let symbolSearchTimeoutPromiseFn: (timeout: number) => Promise = (timeout) => {
 					return TPromise.timeout(timeout).then(() => {
 
@@ -172,7 +177,7 @@ export class OpenAnythingHandler extends QuickOpenHandler {
 				// Apply Range
 				result.forEach((element) => {
 					if (element instanceof FileEntry) {
-						(<FileEntry>element).setRange(range);
+						(<FileEntry>element).setRange(searchWithRange ? searchWithRange.range : null);
 					}
 				});
 
@@ -195,7 +200,7 @@ export class OpenAnythingHandler extends QuickOpenHandler {
 		return this.delayer.trigger(promiseFactory);
 	}
 
-	private findRange(value: string): IRange {
+	private extractRange(value: string): ISearchWithRange {
 		let range: IRange = null;
 
 		// Find Line/Column number from search value using RegExp
@@ -233,7 +238,14 @@ export class OpenAnythingHandler extends QuickOpenHandler {
 			}
 		}
 
-		return range;
+		if (range) {
+			return {
+				search: value.substr(0, patternMatch.index), // clear range suffix from search value
+				range: range
+			}
+		}
+
+		return null;
 	}
 
 	public getResultsFromCache(searchValue: string, range: IRange = null): QuickOpenEntry[] {
@@ -298,7 +310,7 @@ export class OpenAnythingHandler extends QuickOpenHandler {
 		return viewResults;
 	}
 
-	private sort(elementA: QuickOpenEntry, elementB: QuickOpenEntry, lookFor: string, enableFuzzyScoring): number {
+	private sort(elementA: QuickOpenEntry, elementB: QuickOpenEntry, lookFor: string, enableFuzzyScoring: boolean): number {
 
 		// Fuzzy scoring is special
 		if (enableFuzzyScoring) {

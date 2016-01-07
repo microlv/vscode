@@ -14,7 +14,7 @@ import * as types from 'vs/workbench/api/common/extHostTypes';
 import {Range as CodeEditorRange} from 'vs/editor/common/core/range';
 import * as EditorCommon from 'vs/editor/common/editorCommon';
 import {Model as EditorModel} from 'vs/editor/common/model/model';
-import threadService from './testThreadService'
+import {TestThreadService} from './testThreadService'
 import {create as createInstantiationService} from 'vs/platform/instantiation/common/instantiationService';
 import {MarkerService} from 'vs/platform/markers/common/markerService';
 import {IMarkerService} from 'vs/platform/markers/common/markers';
@@ -23,7 +23,7 @@ import {IKeybindingService} from 'vs/platform/keybinding/common/keybindingServic
 import {KeybindingsRegistry} from 'vs/platform/keybinding/common/keybindingsRegistry';
 import {IModelService} from 'vs/editor/common/services/modelService';
 import {ExtHostLanguageFeatures, MainThreadLanguageFeatures} from 'vs/workbench/api/common/extHostLanguageFeatures';
-import {ExtHostApiCommands} from 'vs/workbench/api/common/extHostApiCommands';
+import {registerApiCommands} from 'vs/workbench/api/common/extHostApiCommands';
 import {ExtHostCommands, MainThreadCommands} from 'vs/workbench/api/common/extHostCommands';
 import {ExtHostModelService} from 'vs/workbench/api/common/extHostDocuments';
 
@@ -37,6 +37,7 @@ const model: EditorCommon.IModel = new EditorModel(
 	undefined,
 	URI.parse('far://testing/file.b'));
 
+let threadService: TestThreadService;
 let extHost: ExtHostLanguageFeatures;
 let mainThread: MainThreadLanguageFeatures;
 let commands: ExtHostCommands;
@@ -45,13 +46,20 @@ let originalErrorHandler: (e: any) => any;
 
 suite('ExtHostLanguageFeatureCommands', function() {
 
-	suiteSetup(() => {
+	suiteSetup((done) => {
 
 		originalErrorHandler = errorHandler.getUnexpectedErrorHandler();
 		setUnexpectedErrorHandler(() => { });
 
 		let instantiationService = createInstantiationService();
-		threadService.setInstantiationService(instantiationService);
+		threadService = new TestThreadService(instantiationService);
+
+		instantiationService.addSingleton(IKeybindingService, <IKeybindingService>{
+			executeCommand(id, args): any {
+				let handler = KeybindingsRegistry.getCommands()[id];
+				return TPromise.as(instantiationService.invokeFunction(handler, args));
+			}
+		});
 		instantiationService.addSingleton(IMarkerService, new MarkerService(threadService));
 		instantiationService.addSingleton(IThreadService, threadService);
 		instantiationService.addSingleton(IModelService, <IModelService>{
@@ -64,12 +72,6 @@ suite('ExtHostLanguageFeatureCommands', function() {
 			onModelModeChanged: undefined,
 			onModelRemoved: undefined
 		});
-		instantiationService.addSingleton(IKeybindingService, <IKeybindingService>{
-			executeCommand(id, args): any {
-				let handler = KeybindingsRegistry.getCommands()[id];
-				return TPromise.as(instantiationService.invokeFunction(handler, args));
-			}
-		})
 
 		threadService.getRemotable(ExtHostModelService)._acceptModelAdd({
 			isDirty: false,
@@ -86,9 +88,11 @@ suite('ExtHostLanguageFeatureCommands', function() {
 
 		threadService.getRemotable(MainThreadCommands);
 		commands = threadService.getRemotable(ExtHostCommands);
-		new ExtHostApiCommands(commands);
+		registerApiCommands(threadService);
 		mainThread = threadService.getRemotable(MainThreadLanguageFeatures);
 		extHost = threadService.getRemotable(ExtHostLanguageFeatures);
+
+		threadService.sync().then(done, done)
 	});
 
 	suiteTeardown(() => {
@@ -152,8 +156,8 @@ suite('ExtHostLanguageFeatureCommands', function() {
 				}
 				assert.equal(value.length, 3);
 				done();
-			});
-		});
+			}, done);
+		}, done);
 	});
 
 
@@ -197,8 +201,8 @@ suite('ExtHostLanguageFeatureCommands', function() {
 			commands.executeCommand<vscode.Location[]>('vscode.executeDefinitionProvider', model.getAssociatedResource(), new types.Position(0, 0)).then(values => {
 				assert.equal(values.length, 4);
 				done();
-			});
-		});
+			}, done);
+		}, done);
 	});
 
 	// --- outline
@@ -220,8 +224,8 @@ suite('ExtHostLanguageFeatureCommands', function() {
 				assert.equal(first.name, 'testing2');
 				assert.equal(second.name, 'testing1');
 				done();
-			});
-		});
+			}, done);
+		}, done);
 	});
 
 	// --- suggest
@@ -276,8 +280,8 @@ suite('ExtHostLanguageFeatureCommands', function() {
 				} catch (e) {
 					done(e);
 				}
-			});
-		});
+			}, done);
+		}, done);
 	});
 
 	// --- quickfix
@@ -297,16 +301,23 @@ suite('ExtHostLanguageFeatureCommands', function() {
 				assert.equal(first.command, 'testing');
 				assert.deepEqual(first.arguments, [1, 2, true]);
 				done();
-			});
+			}, done);
 		});
 	});
 
 	// --- code lens
 
 	test('CodeLens, back and forth', function(done) {
+
+		const complexArg = {
+			foo() { },
+			bar() { },
+			big: extHost
+		}
+
 		disposables.push(extHost.registerCodeLensProvider(defaultSelector, <vscode.CodeLensProvider>{
 			provideCodeLenses(): any {
-				return [new types.CodeLens(new types.Range(0, 0, 1, 1), { title: 'Title', command: 'cmd', arguments: [1, 2, true] })];
+				return [new types.CodeLens(new types.Range(0, 0, 1, 1), { title: 'Title', command: 'cmd', arguments: [1, true, complexArg] })];
 			}
 		}));
 
@@ -317,9 +328,11 @@ suite('ExtHostLanguageFeatureCommands', function() {
 
 				assert.equal(first.command.title, 'Title');
 				assert.equal(first.command.command, 'cmd');
-				assert.deepEqual(first.command.arguments, [1, 2, true]);
+				assert.equal(first.command.arguments[0], 1);
+				assert.equal(first.command.arguments[1], true);
+				assert.equal(first.command.arguments[2], complexArg);
 				done();
-			});
+			}, done);
 		});
 	});
 });

@@ -5,13 +5,15 @@
 
 'use strict';
 
+import nls = require('vs/nls');
 import {TPromise} from 'vs/base/common/winjs.base';
 import errors = require('vs/base/common/errors');
 import arrays = require('vs/base/common/arrays');
 import Severity from 'vs/base/common/severity';
+import {OpenGlobalSettingsAction} from 'vs/workbench/browser/actions/openSettings';
 import {IPartService} from 'vs/workbench/services/part/common/partService';
 import {IStorageService, StorageScope} from 'vs/platform/storage/common/storage';
-import {IMessageService} from 'vs/platform/message/common/message';
+import {IMessageService, CloseAction} from 'vs/platform/message/common/message';
 import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
 import {ITelemetryService} from 'vs/platform/telemetry/common/telemetry';
 import {IKeybindingService} from 'vs/platform/keybinding/common/keybindingService';
@@ -98,7 +100,7 @@ export class ElectronIntegration {
 		});
 
 		// Theme changes
-		ipc.on('vscode:changeTheme', (theme:string) => {
+		ipc.on('vscode:changeTheme', (theme: string) => {
 			this.storageService.store('workbench.theme', theme, StorageScope.GLOBAL);
 		});
 
@@ -123,6 +125,30 @@ export class ElectronIntegration {
 				webFrame.setZoomLevel(newZoomLevel);
 			}
 		});
+
+		// Auto Save Info (TODO@Ben remove me in a couple of versions)
+		ipc.on('vscode:showAutoSaveInfo', () => {
+			this.messageService.show(
+				Severity.Info, {
+					message: nls.localize('autoSaveInfo', "The **File | Auto Save** option moved into settings and **files.autoSaveDelay: 1** will be added to preserve it."),
+					actions: [
+						CloseAction,
+						this.instantiationService.createInstance(OpenGlobalSettingsAction, OpenGlobalSettingsAction.ID, OpenGlobalSettingsAction.LABEL)
+					]
+				});
+		});
+
+		ipc.on('vscode:showAutoSaveError', () => {
+			this.messageService.show(
+				Severity.Warning, {
+					message: nls.localize('autoSaveError', "Unable to write to settings. Please add **files.autoSaveDelay: 1** to settings.json."),
+					actions: [
+						CloseAction,
+						this.instantiationService.createInstance(OpenGlobalSettingsAction, OpenGlobalSettingsAction.ID, OpenGlobalSettingsAction.LABEL)
+					]
+				});
+		});
+
 	}
 
 	private resolveKeybindings(actionIds: string[]): TPromise<{ id: string; binding: number; }[]> {

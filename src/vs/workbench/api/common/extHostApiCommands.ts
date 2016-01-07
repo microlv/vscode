@@ -18,8 +18,14 @@ import {IQuickFix2} from 'vs/editor/contrib/quickFix/common/quickFix';
 import {IOutline} from 'vs/editor/contrib/quickOpen/common/quickOpen';
 import {ITypeBearing} from 'vs/workbench/parts/search/common/search';
 import {ICodeLensData} from 'vs/editor/contrib/codelens/common/codelens';
+import {IThreadService} from 'vs/platform/thread/common/thread';
 
-export class ExtHostApiCommands {
+export function registerApiCommands(threadService: IThreadService) {
+	const commands = threadService.getRemotable(ExtHostCommands);
+	new ExtHostApiCommands(commands);
+}
+
+class ExtHostApiCommands {
 
 	private _commands: ExtHostCommands;
 	private _disposables: IDisposable[] = [];
@@ -169,7 +175,7 @@ export class ExtHostApiCommands {
 		};
 		return this._commands.executeCommand<modes.IReference[]>('_executeDefinitionProvider', args).then(value => {
 			if (Array.isArray(value)) {
-				return value.map(typeConverters.toLocation);
+				return value.map(typeConverters.location.to);
 			}
 		});
 	}
@@ -205,7 +211,7 @@ export class ExtHostApiCommands {
 		};
 		return this._commands.executeCommand<modes.IReference[]>('_executeDocumentHighlights', args).then(value => {
 			if (Array.isArray(value)) {
-				return value.map(typeConverters.toLocation);
+				return value.map(typeConverters.location.to);
 			}
 		});
 	}

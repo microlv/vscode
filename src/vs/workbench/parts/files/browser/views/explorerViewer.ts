@@ -269,7 +269,7 @@ export class FileRenderer extends ActionsRenderer implements Tree.IRenderer {
 	}
 
 	public getContentHeight(tree: Tree.ITree, element: any): number {
-		return 24;
+		return 22;
 	}
 
 	public renderContents(tree: Tree.ITree, stat: FileStat, domElement: HTMLElement, previousCleanupFn: Tree.IElementCallback): Tree.IElementCallback {
@@ -867,7 +867,7 @@ export class FileDragAndDrop implements Tree.IDragAndDrop {
 							let confirm: IConfirmation = {
 								message: nls.localize('confirmOverwriteMessage', "'{0}' already exists in the destination folder. Do you want to replace it?", source.name),
 								detail: nls.localize('irreversible', "This action is irreversible!"),
-								primaryButton: nls.localize('replaceButtonLabel', "Replace")
+								primaryButton: nls.localize('replaceButtonLabel', "&&Replace")
 							};
 
 							if (this.messageService.confirm(confirm)) {
