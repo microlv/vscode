@@ -14,8 +14,8 @@ import DOM = require('vs/base/browser/dom');
 import errors = require('vs/base/common/errors');
 import {EditorOptions, EditorInput} from 'vs/workbench/common/editor';
 import {EditorInputAction, BaseEditor} from 'vs/workbench/browser/parts/editor/baseEditor';
-import {IFrameEditorInput} from 'vs/workbench/browser/parts/editor/iframeEditorInput';
-import {IFrameEditorModel} from 'vs/workbench/browser/parts/editor/iframeEditorModel';
+import {IFrameEditorInput} from 'vs/workbench/common/editor/iframeEditorInput';
+import {IFrameEditorModel} from 'vs/workbench/common/editor/iframeEditorModel';
 import {IStorageService, StorageScope} from 'vs/platform/storage/common/storage';
 import {Position} from 'vs/platform/editor/common/editor';
 import {ITelemetryService} from 'vs/platform/telemetry/common/telemetry';
@@ -204,7 +204,7 @@ export class IFrameEditor extends BaseEditor {
 			'	} catch (error) {}',
 			'});',
 
-		// disable dropping into iframe!
+			// disable dropping into iframe!
 			'window.document.addEventListener("dragover", function (e) {',
 			'	e.preventDefault();',
 			'});',

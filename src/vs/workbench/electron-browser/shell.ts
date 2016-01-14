@@ -26,7 +26,7 @@ import {ContextMenuService} from 'vs/workbench/services/contextview/electron-bro
 import {Preferences} from 'vs/workbench/common/constants';
 import timer = require('vs/base/common/timer');
 import {Workbench} from 'vs/workbench/browser/workbench';
-import {Storage} from 'vs/workbench/browser/storage';
+import {Storage, inMemoryLocalStorageInstance} from 'vs/workbench/common/storage';
 import {ITelemetryService} from 'vs/platform/telemetry/common/telemetry';
 import {ElectronTelemetryService} from  'vs/platform/telemetry/electron-browser/electronTelemetryService';
 import {ElectronIntegration} from 'vs/workbench/electron-browser/integration';
@@ -49,26 +49,26 @@ import {IModelService} from 'vs/editor/common/services/modelService';
 import {ModelServiceImpl} from 'vs/editor/common/services/modelServiceImpl';
 import {CodeEditorServiceImpl} from 'vs/editor/browser/services/codeEditorServiceImpl';
 import {ICodeEditorService} from 'vs/editor/common/services/codeEditorService';
-import {MainProcessVSCodeAPIHelper} from 'vs/workbench/api/common/extHost.api.impl';
+import {MainProcessVSCodeAPIHelper} from 'vs/workbench/api/node/extHost.api.impl';
 import {MainProcessPluginService} from 'vs/platform/plugins/common/nativePluginService';
-import {MainThreadDocuments} from 'vs/workbench/api/common/extHostDocuments';
+import {MainThreadDocuments} from 'vs/workbench/api/node/extHostDocuments';
 import {MainProcessTextMateSyntax} from 'vs/editor/node/textMate/TMSyntax';
 import {MainProcessTextMateSnippet} from 'vs/editor/node/textMate/TMSnippets';
 import {JSONValidationExtensionPoint} from 'vs/platform/jsonschemas/common/jsonValidationExtensionPoint';
 import {LanguageConfigurationFileHandler} from 'vs/editor/node/languageConfiguration';
-import {MainThreadFileSystemEventService} from 'vs/workbench/api/common/extHostFileSystemEventService';
-import {MainThreadQuickOpen} from 'vs/workbench/api/common/extHostQuickOpen';
-import {MainThreadStatusBar} from 'vs/workbench/api/common/extHostStatusBar';
-import {MainThreadCommands} from 'vs/workbench/api/common/extHostCommands';
+import {MainThreadFileSystemEventService} from 'vs/workbench/api/node/extHostFileSystemEventService';
+import {MainThreadQuickOpen} from 'vs/workbench/api/node/extHostQuickOpen';
+import {MainThreadStatusBar} from 'vs/workbench/api/node/extHostStatusBar';
+import {MainThreadCommands} from 'vs/workbench/api/node/extHostCommands';
 import {RemoteTelemetryServiceHelper} from 'vs/platform/telemetry/common/abstractRemoteTelemetryService';
-import {MainThreadDiagnostics} from 'vs/workbench/api/common/extHostDiagnostics';
-import {MainThreadOutputService} from 'vs/workbench/api/common/extHostOutputService';
-import {MainThreadMessageService} from 'vs/workbench/api/common/extHostMessageService';
-import {MainThreadLanguages} from 'vs/workbench/api/common/extHostLanguages';
-import {MainThreadEditors} from 'vs/workbench/api/common/extHostEditors';
-import {MainThreadWorkspace} from 'vs/workbench/api/common/extHostWorkspace';
-import {MainThreadConfiguration} from 'vs/workbench/api/common/extHostConfiguration';
-import {MainThreadLanguageFeatures} from 'vs/workbench/api/common/extHostLanguageFeatures';
+import {MainThreadDiagnostics} from 'vs/workbench/api/node/extHostDiagnostics';
+import {MainThreadOutputService} from 'vs/workbench/api/node/extHostOutputService';
+import {MainThreadMessageService} from 'vs/workbench/api/node/extHostMessageService';
+import {MainThreadLanguages} from 'vs/workbench/api/node/extHostLanguages';
+import {MainThreadEditors} from 'vs/workbench/api/node/extHostEditors';
+import {MainThreadWorkspace} from 'vs/workbench/api/node/extHostWorkspace';
+import {MainThreadConfiguration} from 'vs/workbench/api/node/extHostConfiguration';
+import {MainThreadLanguageFeatures} from 'vs/workbench/api/node/extHostLanguageFeatures';
 import {EventService} from 'vs/platform/event/common/eventService';
 import {IOptions} from 'vs/workbench/common/options';
 import themes = require('vs/platform/theme/common/themes');
@@ -91,8 +91,7 @@ import {IWorkspaceContextService, IConfiguration, IWorkspace} from 'vs/platform/
 import {IPluginService} from 'vs/platform/plugins/common/plugins';
 import {MainThreadModeServiceImpl} from 'vs/editor/common/services/modeServiceImpl';
 import {IModeService} from 'vs/editor/common/services/modeService';
-import {UntitledEditorService} from 'vs/workbench/services/untitled/browser/untitledEditorService';
-import {IUntitledEditorService} from 'vs/workbench/services/untitled/common/untitledEditorService';
+import {IUntitledEditorService, UntitledEditorService} from 'vs/workbench/services/untitled/common/untitledEditorService';
 import {CrashReporter} from 'vs/workbench/electron-browser/crashReporter';
 import {IThemeService, ThemeService} from 'vs/workbench/services/themes/node/themeService';
 import { IServiceCtor, isServiceEvent } from 'vs/base/common/service';
@@ -269,7 +268,9 @@ export class WorkbenchShell {
 		];
 
 		this.windowService = new WindowService();
-		this.storageService = new Storage(this.contextService);
+
+		let disableWorkspaceStorage = this.configuration.env.pluginTestsPath || (!this.workspace && !this.configuration.env.pluginDevelopmentPath); // without workspace or in any plugin test, we use inMemory storage unless we develop a plugin where we want to preserve state
+		this.storageService = new Storage(this.contextService, window.localStorage, disableWorkspaceStorage ? inMemoryLocalStorageInstance : window.localStorage);
 
 		// no telemetry in a window for plugin development!
 		let enableTelemetry = this.configuration.env.isBuilt && !this.configuration.env.pluginDevelopmentPath ? !!this.configuration.env.enableTelemetry : false;

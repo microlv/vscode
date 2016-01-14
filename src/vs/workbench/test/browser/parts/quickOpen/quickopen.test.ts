@@ -14,7 +14,7 @@ import {QuickOpenHandlerDescriptor, IQuickOpenRegistry, Extensions as QuickOpenE
 import {QuickOpenController} from 'vs/workbench/browser/parts/quickopen/quickOpenController';
 import {Mode} from 'vs/base/parts/quickopen/common/quickOpen';
 import {QuickOpenAction} from 'vs/workbench/browser/actions/quickOpenAction';
-import {StringEditorInput} from 'vs/workbench/browser/parts/editor/stringEditorInput';
+import {StringEditorInput} from 'vs/workbench/common/editor/stringEditorInput';
 import {EditorInput} from 'vs/workbench/common/editor';
 import {isEmptyObject} from 'vs/base/common/types';
 import {join} from 'vs/base/common/paths';
@@ -23,7 +23,7 @@ import URI from 'vs/base/common/uri';
 import {create} from 'vs/platform/instantiation/common/instantiationService';
 import {EventType, EditorEvent} from 'vs/workbench/common/events';
 import {Promise, TPromise} from 'vs/base/common/winjs.base';
-import {IEditorInput, IEditorModel, IEditorOptions, ITextInput, Position, IEditor, IResourceInput, ITextEditorModel} from 'vs/platform/editor/common/editor';
+import {IEditorInput, IEditorModel, IEditorOptions, Position, IEditor, IResourceInput, ITextEditorModel} from 'vs/platform/editor/common/editor';
 
 function toResource(path) {
 	return URI.file(join('C:\\', path));

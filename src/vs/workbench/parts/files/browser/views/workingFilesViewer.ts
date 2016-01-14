@@ -7,7 +7,7 @@
 import {TPromise, Promise} from 'vs/base/common/winjs.base';
 import platform = require('vs/base/common/platform');
 import {$} from 'vs/base/browser/builder';
-import tree = require('vs/base/parts/tree/common/tree');
+import tree = require('vs/base/parts/tree/browser/tree');
 import {FileLabel} from 'vs/base/browser/ui/filelabel/fileLabel';
 import {ExternalElementsDragAndDropData, ElementsDragAndDropData, DesktopDragAndDropData} from 'vs/base/parts/tree/browser/treeDnd';
 import {ClickBehavior, DefaultController, DefaultDragAndDrop} from 'vs/base/parts/tree/browser/treeDefaults';
@@ -23,7 +23,7 @@ import {ActionsRenderer} from 'vs/base/parts/tree/browser/actionsRenderer';
 import {ContributableActionProvider} from 'vs/workbench/browser/actionBarRegistry';
 import {keybindingForAction, CloseWorkingFileAction, SelectResourceForCompareAction, CompareResourcesAction, SaveFileAsAction, SaveFileAction, RevertFileAction, OpenToSideAction} from 'vs/workbench/parts/files/browser/fileActions';
 import {asFileResource, ITextFileService} from 'vs/workbench/parts/files/common/files';
-import {WorkingFileEntry, WorkingFilesModel} from 'vs/workbench/parts/files/browser/workingFilesModel';
+import {WorkingFileEntry, WorkingFilesModel} from 'vs/workbench/parts/files/common/workingFilesModel';
 import {IUntitledEditorService} from 'vs/workbench/services/untitled/common/untitledEditorService';
 import {IWorkbenchEditorService} from 'vs/workbench/services/editor/common/editorService';
 import {IWorkspaceContextService} from 'vs/workbench/services/workspace/common/contextService';

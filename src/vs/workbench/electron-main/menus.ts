@@ -654,7 +654,7 @@ export class VSCodeMenu {
 					return;
 				}
 
-				if (windowInFocus.win.webContents.isDevToolsFocused()) {
+				if (windowInFocus.win.isDevToolsFocused()) {
 					devToolsFocusedFn(windowInFocus.win.devToolsWebContents);
 				} else {
 					windows.manager.sendToFocused('vscode:runAction', actionId);

@@ -14,7 +14,7 @@ import Paths = require('vs/base/common/paths');
 import Env = require('vs/base/common/flags');
 import URI from 'vs/base/common/uri';
 import MainTelemetryService = require('vs/platform/telemetry/browser/mainTelemetryService');
-import Storage = require('vs/workbench/browser/storage');
+import Storage = require('vs/workbench/common/storage');
 import WorkbenchEditorCommon = require('vs/workbench/common/editor');
 import Viewlet = require('vs/workbench/browser/viewlet');
 import InstantiationService = require('vs/platform/instantiation/common/instantiationService');
@@ -29,7 +29,7 @@ import Errors = require('vs/base/common/errors');
 import http = require('vs/base/common/http');
 import {IConfigurationService} from 'vs/platform/configuration/common/configuration';
 import {IStorageService, StorageScope} from 'vs/platform/storage/common/storage';
-import UntitledEditorService = require('vs/workbench/services/untitled/browser/untitledEditorService');
+import UntitledEditorService = require('vs/workbench/services/untitled/common/untitledEditorService');
 import WorkbenchEditorService = require('vs/workbench/services/editor/common/editorService');
 import QuickOpenService = require('vs/workbench/services/quickopen/common/quickOpenService');
 import ViewletService = require('vs/workbench/services/viewlet/common/viewletService');
@@ -38,7 +38,7 @@ import WorkspaceContextService = require('vs/workbench/services/workspace/common
 import ViewletCommon = require('vs/workbench/common/viewlet');
 import Files = require('vs/platform/files/common/files');
 import {BaseWorkspaceContextService} from 'vs/platform/workspace/common/baseWorkspaceContextService';
-import {IEditorInput, IEditorModel, IEditorOptions, ITextInput, Position, IEditor, IResourceInput, ITextEditorModel} from 'vs/platform/editor/common/editor';
+import {IEditorInput, IEditorModel, IEditorOptions, Position, IEditor, IResourceInput, ITextEditorModel} from 'vs/platform/editor/common/editor';
 import {IEventService} from 'vs/platform/event/common/event';
 import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
 import {IUntitledEditorService} from 'vs/workbench/services/untitled/common/untitledEditorService';
@@ -397,7 +397,6 @@ export class TestEditorService implements WorkbenchEditorService.IWorkbenchEdito
 
 	public resolveEditorModel(input: IEditorInput, refresh?: boolean): TPromise<IEditorModel>;
 	public resolveEditorModel(input: IResourceInput, refresh?: boolean): TPromise<ITextEditorModel>;
-	public resolveEditorModel(input: WorkbenchEditorService.IFileInput, refresh?: boolean): TPromise<ITextEditorModel>;
 	public resolveEditorModel(input: any, refresh?: boolean): Promise {
 		this.callback('resolveEditorModel');
 
@@ -421,7 +420,7 @@ export class TestEditorService implements WorkbenchEditorService.IWorkbenchEdito
 		return TPromise.as(null);
 	}
 
-	public inputToType(input: ITextInput): TPromise<IEditorInput> {
+	public inputToType(input: IResourceInput): TPromise<IEditorInput> {
 		return Promise.as(null);
 	}
 }

@@ -27,12 +27,12 @@ import {IFileOperationResult, FileOperationResult, IFileStat, IFileService} from
 import {FileEditorInput} from 'vs/workbench/parts/files/browser/editors/fileEditorInput';
 import {DuplicateFileAction, ImportFileAction, PasteFileAction, keybindingForAction, IEditableData, IFileViewletState} from 'vs/workbench/parts/files/browser/fileActions';
 import {EditorOptions} from 'vs/workbench/common/editor';
-import Tree = require('vs/base/parts/tree/common/tree');
+import Tree = require('vs/base/parts/tree/browser/tree');
 import labels = require('vs/base/common/labels');
 import {DesktopDragAndDropData, ExternalElementsDragAndDropData} from 'vs/base/parts/tree/browser/treeDnd';
 import {ClickBehavior, DefaultController} from 'vs/base/parts/tree/browser/treeDefaults';
 import {ActionsRenderer} from 'vs/base/parts/tree/browser/actionsRenderer';
-import {FileStat, NewStatPlaceholder} from 'vs/workbench/parts/files/common/viewModel';
+import {FileStat, NewStatPlaceholder} from 'vs/workbench/parts/files/common/explorerViewModel';
 import {DragMouseEvent, StandardMouseEvent} from 'vs/base/browser/mouseEvent';
 import {StandardKeyboardEvent} from 'vs/base/browser/keyboardEvent';
 import {IWorkbenchEditorService} from 'vs/workbench/services/editor/common/editorService';

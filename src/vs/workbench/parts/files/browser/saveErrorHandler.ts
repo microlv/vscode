@@ -14,13 +14,13 @@ import {EditorModel} from 'vs/workbench/common/editor';
 import {guessMimeTypes} from 'vs/base/common/mime';
 import {EditorInputAction} from 'vs/workbench/browser/parts/editor/baseEditor';
 import {IModel} from 'vs/editor/common/editorCommon';
-import {ResourceEditorInput} from 'vs/workbench/browser/parts/editor/resourceEditorInput';
-import {DiffEditorInput} from 'vs/workbench/browser/parts/editor/diffEditorInput';
-import {DiffEditorModel} from 'vs/workbench/browser/parts/editor/diffEditorModel';
+import {ResourceEditorInput} from 'vs/workbench/common/editor/resourceEditorInput';
+import {DiffEditorInput} from 'vs/workbench/common/editor/diffEditorInput';
+import {DiffEditorModel} from 'vs/workbench/common/editor/diffEditorModel';
 import {FileEditorInput} from 'vs/workbench/parts/files/browser/editors/fileEditorInput';
 import {SaveFileAsAction, RevertFileAction, SaveFileAction} from 'vs/workbench/parts/files/browser/fileActions';
 import {IFileService, IFileOperationResult, FileOperationResult} from 'vs/platform/files/common/files';
-import {TextFileEditorModel, ISaveErrorHandler} from 'vs/workbench/parts/files/browser/editors/textFileEditorModel';
+import {TextFileEditorModel, ISaveErrorHandler} from 'vs/workbench/parts/files/common/editors/textFileEditorModel';
 import {IWorkbenchEditorService} from 'vs/workbench/services/editor/common/editorService';
 import {IEventService} from 'vs/platform/event/common/event';
 import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
@@ -151,14 +151,14 @@ export class FileOnDiskEditorInput extends ResourceEditorInput {
 		name: string,
 		description: string,
 		@IModelService modelService: IModelService,
-		@IModeService private modeService: IModeService,
+		@IModeService modeService: IModeService,
 		@IInstantiationService instantiationService: IInstantiationService,
 		@IFileService private fileService: IFileService
 	) {
 		// We create a new resource URI here that is different from the file resource because we represent the state of
 		// the file as it is on disk and not as it is (potentially cached) in Code. That allows us to have a different
 		// model for the left-hand comparision compared to the conflicting one in Code to the right.
-		super(name, description, URI.create('disk', null, fileResource.fsPath), modelService, instantiationService);
+		super(name, description, URI.create('disk', null, fileResource.fsPath), modelService, modeService, instantiationService);
 
 		this.fileResource = fileResource;
 		this.mime = mime;
