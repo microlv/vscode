@@ -33,7 +33,10 @@ export class HighlightedLabel implements IDisposable {
 		return this.domNode;
 	}
 
-	set(text: string = '', highlights?: IHighlight[]) {
+	set(text: string, highlights: IHighlight[] = []) {
+		if (!text) {
+			text = '';
+		}
 		if (this.didEverRender && this.text === text && objects.equals(this.highlights, highlights)) {
 			return;
 		}
@@ -60,21 +63,21 @@ export class HighlightedLabel implements IDisposable {
 				continue;
 			}
 			if (pos < highlight.start) {
-				htmlContent.push('<span>')
+				htmlContent.push('<span>');
 				htmlContent.push(expandOcticons(escape(this.text.substring(pos, highlight.start))));
-				htmlContent.push('</span>')
+				htmlContent.push('</span>');
 				pos = highlight.end;
 			}
-			htmlContent.push('<span class="highlight">')
+			htmlContent.push('<span class="highlight">');
 			htmlContent.push(expandOcticons(escape(this.text.substring(highlight.start, highlight.end))));
-			htmlContent.push('</span>')
+			htmlContent.push('</span>');
 			pos = highlight.end;
 		}
 
 		if (pos < this.text.length) {
-			htmlContent.push('<span>')
+			htmlContent.push('<span>');
 			htmlContent.push(expandOcticons(escape(this.text.substring(pos))));
-			htmlContent.push('</span>')
+			htmlContent.push('</span>');
 		}
 
 		this.domNode.innerHTML = htmlContent.join('');

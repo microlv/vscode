@@ -7,17 +7,17 @@
 
 import 'vs/css!./checkbox';
 
-import * as nls from 'vs/nls';
+import DOM = require('vs/base/browser/dom');
 import {KeyCode} from 'vs/base/common/keyCodes';
 import {Widget} from 'vs/base/browser/ui/widget';
-import {StandardKeyboardEvent} from 'vs/base/browser/keyboardEvent';
+import {IKeyboardEvent} from 'vs/base/browser/keyboardEvent';
 
 export interface ICheckboxOpts {
 	actionClassName: string;
 	title: string;
 	isChecked: boolean;
-	onChange: () => void;
-	onKeyDown?: (e:StandardKeyboardEvent) => void;
+	onChange: (viaKeyboard: boolean) => void;
+	onKeyDown?: (e: IKeyboardEvent) => void;
 }
 
 export class Checkbox extends Widget {
@@ -27,7 +27,7 @@ export class Checkbox extends Widget {
 
 	private _checked: boolean;
 
-	constructor(opts:ICheckboxOpts) {
+	constructor(opts: ICheckboxOpts) {
 		super();
 		this._opts = opts;
 		this._checked = this._opts.isChecked;
@@ -41,17 +41,15 @@ export class Checkbox extends Widget {
 		this.domNode.setAttribute('aria-label', this._opts.title);
 
 		this.onclick(this.domNode, (ev) => {
-			this._checked = !this._checked;
-			this.domNode.className = this._className();
-			this._opts.onChange();
+			this.checked = !this._checked;
+			this._opts.onChange(false);
 			ev.preventDefault();
 		});
 
 		this.onkeydown(this.domNode, (keyboardEvent) => {
 			if (keyboardEvent.keyCode === KeyCode.Space || keyboardEvent.keyCode === KeyCode.Enter) {
-				this._checked = !this._checked;
-				this.domNode.className = this._className();
-				this._opts.onChange();
+				this.checked = !this._checked;
+				this._opts.onChange(true);
 				keyboardEvent.preventDefault();
 				return;
 			}
@@ -70,7 +68,7 @@ export class Checkbox extends Widget {
 		return this._checked;
 	}
 
-	public set checked(newIsChecked:boolean) {
+	public set checked(newIsChecked: boolean) {
 		this._checked = newIsChecked;
 		this.domNode.setAttribute('aria-checked', String(this._checked));
 		this.domNode.className = this._className();
@@ -90,7 +88,7 @@ export class Checkbox extends Widget {
 	}
 
 	public disable(): void {
-		this.domNode.tabIndex = -1;
+		DOM.removeTabIndexAndUpdateFocus(this.domNode);
 		this.domNode.setAttribute('aria-disabled', String(true));
 	}
 }

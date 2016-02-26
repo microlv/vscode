@@ -4,7 +4,7 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import {Promise, TPromise} from 'vs/base/common/winjs.base';
+import {TPromise} from 'vs/base/common/winjs.base';
 import nls = require('vs/nls');
 import errors = require('vs/base/common/errors');
 import paths = require('vs/base/common/paths');
@@ -13,7 +13,6 @@ import URI from 'vs/base/common/uri';
 import {EditorModel} from 'vs/workbench/common/editor';
 import {guessMimeTypes} from 'vs/base/common/mime';
 import {EditorInputAction} from 'vs/workbench/browser/parts/editor/baseEditor';
-import {IModel} from 'vs/editor/common/editorCommon';
 import {ResourceEditorInput} from 'vs/workbench/common/editor/resourceEditorInput';
 import {DiffEditorInput} from 'vs/workbench/common/editor/diffEditorInput';
 import {DiffEditorModel} from 'vs/workbench/common/editor/diffEditorModel';
@@ -61,7 +60,7 @@ export class SaveErrorHandler implements ISaveErrorHandler {
 						return model.save(true /* overwrite readonly */).then(() => true);
 					}
 
-					return Promise.as(true);
+					return TPromise.as(true);
 				}));
 			} else {
 				actions.push(new Action('workbench.files.action.retry', nls.localize('retry', "Retry"), null, true, () => {
@@ -151,14 +150,14 @@ export class FileOnDiskEditorInput extends ResourceEditorInput {
 		name: string,
 		description: string,
 		@IModelService modelService: IModelService,
-		@IModeService modeService: IModeService,
+		@IModeService private modeService: IModeService,
 		@IInstantiationService instantiationService: IInstantiationService,
 		@IFileService private fileService: IFileService
 	) {
 		// We create a new resource URI here that is different from the file resource because we represent the state of
 		// the file as it is on disk and not as it is (potentially cached) in Code. That allows us to have a different
 		// model for the left-hand comparision compared to the conflicting one in Code to the right.
-		super(name, description, URI.create('disk', null, fileResource.fsPath), modelService, modeService, instantiationService);
+		super(name, description, URI.create('disk', null, fileResource.fsPath), modelService, instantiationService);
 
 		this.fileResource = fileResource;
 		this.mime = mime;
@@ -238,7 +237,7 @@ class ResolveSaveConflictMessage implements IMessageWithAction {
 					});
 				}
 
-				return Promise.as(true);
+				return TPromise.as(true);
 			})
 		];
 	}
@@ -258,7 +257,7 @@ export class AcceptLocalChangesAction extends EditorInputAction {
 		this.messagesToHide = [];
 	}
 
-	public run(): Promise {
+	public run(): TPromise<void> {
 		let conflictInput = <ConflictResolutionDiffEditorInput>this.input;
 		let model = conflictInput.getModel();
 		let localModelValue = model.getValue();
@@ -324,7 +323,7 @@ export class RevertLocalChangesAction extends EditorInputAction {
 		super('workbench.action.files.revert', nls.localize('revertLocalChanges', "Discard local changes and revert to content on disk"), 'conflict-editor-action revert-changes');
 	}
 
-	public run(): Promise {
+	public run(): TPromise<void> {
 		let conflictInput = <ConflictResolutionDiffEditorInput>this.input;
 		let model = conflictInput.getModel();
 

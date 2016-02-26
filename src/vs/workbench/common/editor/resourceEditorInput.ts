@@ -5,6 +5,7 @@
 'use strict';
 
 import {TPromise} from 'vs/base/common/winjs.base';
+import {sequence} from 'vs/base/common/async';
 import {EditorModel, EditorInput} from 'vs/workbench/common/editor';
 import {ResourceEditorModel} from 'vs/workbench/common/editor/resourceEditorModel';
 import {IModel} from 'vs/editor/common/editorCommon';
@@ -12,15 +13,13 @@ import URI from 'vs/base/common/uri';
 import {EventType} from 'vs/base/common/events';
 import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
 import {IModelService} from 'vs/editor/common/services/modelService';
-import {IModeService} from 'vs/editor/common/services/modeService';
 import {IDisposable} from 'vs/base/common/lifecycle';
 
 /**
  *
  */
 export interface IResourceEditorContentProvider {
-	provideTextContent(resource: URI): TPromise<string>;
-	// onDidChange
+	provideTextContent(resource: URI): TPromise<IModel>;
 }
 
 /**
@@ -33,14 +32,31 @@ export class ResourceEditorInput extends EditorInput {
 	// todo@joh,ben this should maybe be a service that is in charge of loading/resolving a uri from a scheme
 
 	private static loadingModels: { [uri: string]: TPromise<IModel> } = Object.create(null);
-	private static registry: { [scheme: string]: IResourceEditorContentProvider } = Object.create(null);
+	private static registry: { [scheme: string]: IResourceEditorContentProvider[] } = Object.create(null);
 
 	public static registerResourceContentProvider(scheme: string, provider: IResourceEditorContentProvider): IDisposable {
-		ResourceEditorInput.registry[scheme] = provider;
-		return { dispose() { delete ResourceEditorInput.registry[scheme] } };
+		let array = ResourceEditorInput.registry[scheme];
+		if (!array) {
+			array = [provider];
+			ResourceEditorInput.registry[scheme] = array;
+		} else {
+			array.unshift(provider);
+		}
+		return {
+			dispose() {
+				let array = ResourceEditorInput.registry[scheme];
+				let idx = array.indexOf(provider);
+				if (idx >= 0) {
+					array.splice(idx, 1);
+					if (array.length === 0) {
+						delete ResourceEditorInput.registry[scheme];
+					}
+				}
+			}
+		};
 	}
 
-	private static getOrCreateModel(modelService: IModelService, modeService: IModeService, resource: URI): TPromise<IModel> {
+	private static getOrCreateModel(modelService: IModelService, resource: URI): TPromise<IModel> {
 		const model = modelService.getModel(resource);
 		if (model) {
 			return TPromise.as(model);
@@ -51,8 +67,8 @@ export class ResourceEditorInput extends EditorInput {
 
 			// make sure we have a provider this scheme
 			// the resource uses
-			const provider = ResourceEditorInput.registry[resource.scheme];
-			if (!provider) {
+			const array = ResourceEditorInput.registry[resource.scheme];
+			if (!array) {
 				return TPromise.wrapError(`No model with uri '${resource}' nor a resolver for the scheme '${resource.scheme}'.`);
 			}
 
@@ -61,11 +77,26 @@ export class ResourceEditorInput extends EditorInput {
 			// twice
 			ResourceEditorInput.loadingModels[resource.toString()] = loadingModel = new TPromise<IModel>((resolve, reject) => {
 
-				provider.provideTextContent(resource).then(value => {
-					const firstLineText = value.substr(0, 1 + value.search(/\r?\n/));
-					const mode = modeService.getOrCreateModeByFilenameOrFirstLine(resource.fsPath, firstLineText);
-					return modelService.createModel(value, mode, resource);
-				}).then(resolve, reject);
+				let result: IModel;
+				let lastError: any;
+
+				sequence(array.map(provider => {
+					return () => {
+						if (!result) {
+							return provider.provideTextContent(resource).then(value => {
+								result = value;
+							}, err => {
+								lastError = err;
+							});
+						}
+					};
+				})).then(() => {
+					if (!result && lastError) {
+						reject(lastError);
+					} else {
+						resolve(result);
+					}
+				}, reject);
 
 			}, function() {
 				// no cancellation when caching promises
@@ -93,7 +124,6 @@ export class ResourceEditorInput extends EditorInput {
 		description: string,
 		resource: URI,
 		@IModelService protected modelService: IModelService,
-		@IModeService protected modeService: IModeService,
 		@IInstantiationService protected instantiationService: IInstantiationService
 	) {
 		super();
@@ -123,7 +153,7 @@ export class ResourceEditorInput extends EditorInput {
 		}
 
 		// Otherwise Create Model and handle dispose event
-		return ResourceEditorInput.getOrCreateModel(this.modelService, this.modeService, this.resource).then(() => {
+		return ResourceEditorInput.getOrCreateModel(this.modelService, this.resource).then(() => {
 			let model = this.instantiationService.createInstance(ResourceEditorModel, this.resource);
 			const unbind = model.addListener(EventType.DISPOSE, () => {
 				this.cachedModel = null; // make sure we do not dispose model again

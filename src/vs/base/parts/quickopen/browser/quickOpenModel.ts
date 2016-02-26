@@ -2,8 +2,10 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
+
 'use strict';
 
+import nls = require('vs/nls');
 import {TPromise} from 'vs/base/common/winjs.base';
 import types = require('vs/base/common/types');
 import URI from 'vs/base/common/uri';
@@ -11,7 +13,7 @@ import {ITree, IElementCallback} from 'vs/base/parts/tree/browser/tree';
 import filters = require('vs/base/common/filters');
 import strings = require('vs/base/common/strings');
 import paths = require('vs/base/common/paths');
-import {IQuickNavigateConfiguration, IModel, IDataSource, IFilter, IRenderer, IRunner, Mode} from 'vs/base/parts/quickopen/common/quickOpen';
+import {IQuickNavigateConfiguration, IModel, IDataSource, IFilter, IAccessiblityProvider, IRenderer, IRunner, Mode} from 'vs/base/parts/quickopen/common/quickOpen';
 import {IActionProvider} from 'vs/base/parts/tree/browser/actionsRenderer';
 import {Action, IAction, IActionRunner} from 'vs/base/common/actions';
 import {compareAnything, compareByPrefix} from 'vs/base/common/comparers';
@@ -37,6 +39,7 @@ export class QuickOpenEntry {
 	private id: string;
 	private labelHighlights: IHighlight[];
 	private descriptionHighlights: IHighlight[];
+	private detailHighlights: IHighlight[];
 	private hidden: boolean;
 	private labelPrefix: string;
 
@@ -68,9 +71,16 @@ export class QuickOpenEntry {
 	}
 
 	/**
-	 * Meta information about the entry that is optional and can be shown to the right of the label
+	 * The label of the entry to use when a screen reader wants to read about the entry
 	 */
-	public getMeta(): string {
+	public getAriaLabel(): string {
+		return this.getLabel();
+	}
+
+	/**
+	 * Detail information about the entry that is optional and can be shown below the label
+	 */
+	public getDetail(): string {
 		return null;
 	}
 
@@ -120,16 +130,17 @@ export class QuickOpenEntry {
 	/**
 	 * Allows to set highlight ranges that should show up for the entry label and optionally description if set.
 	 */
-	public setHighlights(labelHighlights: IHighlight[], descriptionHighlights?: IHighlight[]): void {
+	public setHighlights(labelHighlights: IHighlight[], descriptionHighlights?: IHighlight[], detailHighlights?: IHighlight[]): void {
 		this.labelHighlights = labelHighlights;
 		this.descriptionHighlights = descriptionHighlights;
+		this.detailHighlights = detailHighlights;
 	}
 
 	/**
 	 * Allows to return highlight ranges that should show up for the entry label and description.
 	 */
-	public getHighlights(): [IHighlight[] /* Label */, IHighlight[] /* Description */] {
-		return [this.labelHighlights, this.descriptionHighlights];
+	public getHighlights(): [IHighlight[] /* Label */, IHighlight[] /* Description */, IHighlight[] /* Detail */] {
+		return [this.labelHighlights, this.descriptionHighlights, this.detailHighlights];
 	}
 
 	/**
@@ -179,7 +190,7 @@ export class QuickOpenEntry {
 		return compareAnything(nameA, nameB, lookFor);
 	}
 
-	public static compareByScore(elementA: QuickOpenEntry, elementB: QuickOpenEntry, lookFor: string, scorerCache?: { [key: string]: number }): number {
+	public static compareByScore(elementA: QuickOpenEntry, elementB: QuickOpenEntry, lookFor: string, lookForNormalizedLower: string, scorerCache?: { [key: string]: number }): number {
 		const labelA = elementA.getLabel();
 		const labelB = elementB.getLabel();
 
@@ -226,7 +237,12 @@ export class QuickOpenEntry {
 			return resourceA.fsPath.length < resourceB.fsPath.length ? -1 : 1;
 		}
 
-		return QuickOpenEntry.compare(elementA, elementB, lookFor);
+		// Finally compare by label or resource path
+		if (labelA === labelB && resourceA && resourceB) {
+			return compareAnything(resourceA.fsPath, resourceB.fsPath, lookForNormalizedLower);
+		}
+
+		return compareAnything(labelA, labelB, lookForNormalizedLower);
 	}
 
 	/**
@@ -358,8 +374,12 @@ export class QuickOpenEntryGroup extends QuickOpenEntry {
 		return this.entry ? this.entry.getLabel() : super.getLabel();
 	}
 
-	public getMeta(): string {
-		return this.entry ? this.entry.getMeta() : super.getMeta();
+	public getAriaLabel(): string {
+		return this.entry ? this.entry.getAriaLabel() : super.getAriaLabel();
+	}
+
+	public getDetail(): string {
+		return this.entry ? this.entry.getDetail() : super.getDetail();
 	}
 
 	public getResource(): URI {
@@ -378,7 +398,7 @@ export class QuickOpenEntryGroup extends QuickOpenEntry {
 		return this.entry;
 	}
 
-	public getHighlights(): [IHighlight[], IHighlight[]] {
+	public getHighlights(): [IHighlight[], IHighlight[], IHighlight[]] {
 		return this.entry ? this.entry.getHighlights() : super.getHighlights();
 	}
 
@@ -446,7 +466,7 @@ export interface IQuickOpenEntryTemplateData {
 	icon: HTMLSpanElement;
 	prefix: HTMLSpanElement;
 	label: HighlightedLabel;
-	meta: HTMLSpanElement;
+	detail: HighlightedLabel;
 	description: HighlightedLabel;
 	actionBar: ActionBar;
 }
@@ -471,7 +491,9 @@ class Renderer implements IRenderer<QuickOpenEntry> {
 		if (entry instanceof QuickOpenEntryItem) {
 			return (<QuickOpenEntryItem>entry).getHeight();
 		}
-
+		if (entry.getDetail()) {
+			return 44;
+		}
 		return 22;
 	}
 
@@ -533,26 +555,27 @@ class Renderer implements IRenderer<QuickOpenEntry> {
 		// Label
 		let label = new HighlightedLabel(entry);
 
-		// Meta
-		let meta = document.createElement('span');
-		entry.appendChild(meta);
-		DOM.addClass(meta, 'quick-open-entry-meta');
-
 		// Description
 		let descriptionContainer = document.createElement('span');
 		entry.appendChild(descriptionContainer);
 		DOM.addClass(descriptionContainer, 'quick-open-entry-description');
 		let description = new HighlightedLabel(descriptionContainer);
 
+		// Detail
+		let detailContainer = document.createElement('div');
+		entry.appendChild(detailContainer);
+		DOM.addClass(detailContainer, 'quick-open-entry-meta');
+		let detail = new HighlightedLabel(detailContainer);
+
 		return {
-			container: container,
-			icon: icon,
-			prefix: prefix,
-			label: label,
-			meta: meta,
-			description: description,
-			group: group,
-			actionBar: actionBar
+			container,
+			icon,
+			prefix,
+			label,
+			detail,
+			description,
+			group,
+			actionBar
 		};
 	}
 
@@ -603,7 +626,7 @@ class Renderer implements IRenderer<QuickOpenEntry> {
 
 		// Normal Entry
 		if (entry instanceof QuickOpenEntry) {
-			let highlights = entry.getHighlights();
+			let [labelHighlights, descriptionHighlights, detailHighlights] = entry.getHighlights();
 
 			// Icon
 			let iconClass = entry.getIcon() ? ('quick-open-entry-icon ' + entry.getIcon()) : '';
@@ -613,16 +636,14 @@ class Renderer implements IRenderer<QuickOpenEntry> {
 			let prefix = entry.getPrefix() || '';
 			data.prefix.textContent = prefix;
 
-			let labelHighlights = highlights[0];
-			data.label.set(entry.getLabel() || '', labelHighlights || []);
+			// Label
+			data.label.set(entry.getLabel(), labelHighlights || []);
 
 			// Meta
-			let metaLabel = entry.getMeta() || '';
-			data.meta.textContent = metaLabel;
+			data.detail.set(entry.getDetail(), detailHighlights);
 
 			// Description
-			let descriptionHighlights = highlights[1];
-			data.description.set(entry.getDescription() || '', descriptionHighlights || []);
+			data.description.set(entry.getDescription(), descriptionHighlights || []);
 		}
 	}
 
@@ -639,12 +660,12 @@ export class QuickOpenModel implements
 	IFilter<QuickOpenEntry>,
 	IRunner<QuickOpenEntry>
 {
-
 	private _entries: QuickOpenEntry[];
 	private _dataSource: IDataSource<QuickOpenEntry>;
 	private _renderer: IRenderer<QuickOpenEntry>;
 	private _filter: IFilter<QuickOpenEntry>;
 	private _runner: IRunner<QuickOpenEntry>;
+	private _accessibilityProvider: IAccessiblityProvider<QuickOpenEntry>;
 
 	constructor(entries: QuickOpenEntry[] = [], actionProvider: IActionProvider = new NoActionProvider()) {
 		this._entries = entries;
@@ -652,6 +673,7 @@ export class QuickOpenModel implements
 		this._renderer = new Renderer(actionProvider);
 		this._filter = this;
 		this._runner = this;
+		this._accessibilityProvider = this;
 	}
 
 	public get entries() { return this._entries; }
@@ -659,6 +681,7 @@ export class QuickOpenModel implements
 	public get renderer() { return this._renderer; }
 	public get filter() { return this._filter; }
 	public get runner() { return this._runner; }
+	public get accessibilityProvider() { return this._accessibilityProvider; }
 
 	public set entries(entries: QuickOpenEntry[]) {
 		this._entries = entries;
@@ -701,6 +724,15 @@ export class QuickOpenModel implements
 
 	getLabel(entry: QuickOpenEntry): string {
 		return entry.getLabel();
+	}
+
+	getAriaLabel(entry: QuickOpenEntry): string {
+		const ariaLabel = entry.getAriaLabel();
+		if (ariaLabel) {
+			return nls.localize('quickOpenAriaLabelEntry', "{0}, picker", entry.getAriaLabel());
+		}
+
+		return nls.localize('quickOpenAriaLabel', "picker");
 	}
 
 	isVisible<T>(entry: QuickOpenEntry): boolean {

@@ -4,35 +4,38 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import {IResourceService} from 'vs/editor/common/services/resourceService';
-import {IModelService} from 'vs/editor/common/services/modelService';
-import {IModeService} from 'vs/editor/common/services/modeService';
-import {ModeServiceImpl} from 'vs/editor/common/services/modeServiceImpl';
-import {ModelServiceImpl} from 'vs/editor/common/services/modelServiceImpl';
-import {NULL_THREAD_SERVICE} from 'vs/platform/test/common/nullThreadService';
-import {AbstractPluginService} from 'vs/platform/plugins/common/abstractPluginService';
-import * as InstantiationService from 'vs/platform/instantiation/common/instantiationService';
-
+import Severity from 'vs/base/common/severity';
 import {IConfigurationService} from 'vs/platform/configuration/common/configuration';
-import {IContextViewService, IContextMenuService} from 'vs/platform/contextview/browser/contextView';
+import {IContextMenuService, IContextViewService} from 'vs/platform/contextview/browser/contextView';
 import {IEditorService} from 'vs/platform/editor/common/editor';
 import {IEventService} from 'vs/platform/event/common/event';
 import {IFileService} from 'vs/platform/files/common/files';
 import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
+import {createInstantiationService} from 'vs/platform/instantiation/common/instantiationService';
 import {IKeybindingService} from 'vs/platform/keybinding/common/keybindingService';
 import {ILifecycleService} from 'vs/platform/lifecycle/common/lifecycle';
 import {IMarkerService} from 'vs/platform/markers/common/markers';
 import {IMessageService} from 'vs/platform/message/common/message';
+import {AbstractPluginService, ActivatedPlugin} from 'vs/platform/plugins/common/abstractPluginService';
+import {IPluginService} from 'vs/platform/plugins/common/plugins';
 import {IProgressService} from 'vs/platform/progress/common/progress';
-import {IStorageService} from 'vs/platform/storage/common/storage';
 import {IRequestService} from 'vs/platform/request/common/request';
 import {ISearchService} from 'vs/platform/search/common/search';
+import {IStorageService} from 'vs/platform/storage/common/storage';
 import {ITelemetryService} from 'vs/platform/telemetry/common/telemetry';
+import {NULL_THREAD_SERVICE} from 'vs/platform/test/common/nullThreadService';
 import {IThreadService} from 'vs/platform/thread/common/thread';
-import {IPluginService} from 'vs/platform/plugins/common/plugins';
 import {IWorkspaceContextService} from 'vs/platform/workspace/common/workspace';
-
-import Severity from 'vs/base/common/severity';
+import {IModeService} from 'vs/editor/common/services/modeService';
+import {ModeServiceImpl} from 'vs/editor/common/services/modeServiceImpl';
+import {IModelService} from 'vs/editor/common/services/modelService';
+import {ModelServiceImpl} from 'vs/editor/common/services/modelServiceImpl';
+import {IResourceService} from 'vs/editor/common/services/resourceService';
+import {TPromise} from 'vs/base/common/winjs.base';
+import URI from 'vs/base/common/uri';
+import {ConfigurationService, IContent, IStat} from 'vs/platform/configuration/common/configurationService';
+import {BaseWorkspaceContextService} from 'vs/platform/workspace/common/baseWorkspaceContextService';
+import {EventService} from 'vs/platform/event/common/eventService';
 
 export interface IMockPlatformServices {
 	threadService?:IThreadService;
@@ -56,7 +59,7 @@ export interface IMockPlatformServices {
 	fileService?:IFileService;
 }
 
-export function createMockPlatformServices(mockPlatformServices:IMockPlatformServices = {}): any {
+function createMockPlatformServices(mockPlatformServices:IMockPlatformServices = {}): any {
 	return {
 		threadService: mockPlatformServices.threadService,
 		pluginService: mockPlatformServices.pluginService,
@@ -85,13 +88,6 @@ export interface IMockEditorServices extends IMockPlatformServices {
 	modeService?: IModeService;
 }
 
-export function createMockEditorServices(mockEditorServices: IMockEditorServices = {}):any {
-	var ret = createMockPlatformServices(mockEditorServices);
-	ret['modelService'] = mockEditorServices.modelService;
-	ret['modeService'] = mockEditorServices.modeService;
-	return ret;
-}
-
 export interface IMockEditorWorkerServices extends IMockPlatformServices {
 	resourceService?: IResourceService;
 }
@@ -103,12 +99,12 @@ export function createMockEditorWorkerServices(mockEditorWorkerServices: IMockEd
 }
 
 class MockModeService extends ModeServiceImpl {}
-class MockPluginService extends AbstractPluginService {
+class MockPluginService extends AbstractPluginService<ActivatedPlugin> {
 	constructor() {
 		super(true);
 	}
 
-	protected _showMessage(severity:Severity, msg:string): void {
+	protected _showMessage(severity: Severity, msg: string): void {
 		switch (severity) {
 			case Severity.Error:
 				console.error(msg);
@@ -124,17 +120,27 @@ class MockPluginService extends AbstractPluginService {
 		}
 	}
 
-	public deactivate(pluginId:string): void {
+	public deactivate(pluginId: string): void {
 		// nothing to do
 	}
+
+
+	protected _createFailedPlugin(): any {
+		throw new Error('not implemented');
+	}
+
+	protected _actualActivatePlugin(pluginDescription): any {
+		throw new Error('not implemented');
+	}
 }
-class MockModelService extends ModelServiceImpl {}
+
+class MockModelService extends ModelServiceImpl { }
 
 export function createMockModeService(): IModeService {
 	var threadService = NULL_THREAD_SERVICE;
 	var pluginService = new MockPluginService();
 	var modeService = new MockModeService(threadService, pluginService);
-	var inst = InstantiationService.create({
+	var inst = createInstantiationService({
 		threadService: threadService,
 		pluginService: pluginService,
 		modeService: modeService
@@ -144,7 +150,54 @@ export function createMockModeService(): IModeService {
 }
 
 export function createMockModelService(): IModelService {
+	let contextService = new BaseWorkspaceContextService({
+		resource: URI.create('inmemory', 'model', '/'),
+		id: null,
+		name: null,
+		uid: null,
+		mtime: null
+	}, {});
+	let eventService = new EventService();
+	let configurationService = new MockConfigurationService(contextService, eventService);
 	var threadService = NULL_THREAD_SERVICE;
-	var modelService = new MockModelService(threadService, null);
+	var pluginService = new MockPluginService();
+	var modeService = new MockModeService(threadService, pluginService);
+	var modelService = new MockModelService(threadService, null, modeService, configurationService);
+	var inst = createInstantiationService({
+		threadService: threadService,
+		pluginService: pluginService,
+		modeService: modeService,
+		contextService: contextService,
+		eventService: eventService,
+		configurationService: configurationService
+	});
+	threadService.setInstantiationService(inst);
 	return modelService;
+}
+
+export class MockConfigurationService extends ConfigurationService {
+
+	protected resolveContents(resources: URI[]): TPromise<IContent[]> {
+		return TPromise.as(resources.map((resource) => {
+			return {
+				resource: resource,
+				value: ''
+			};
+		}));
+	}
+
+	protected resolveContent(resource: URI): TPromise<IContent> {
+		return TPromise.as({
+			resource: resource,
+			value: ''
+		});
+	}
+
+	protected resolveStat(resource: URI): TPromise<IStat> {
+		return TPromise.as({
+			resource: resource,
+			isDirectory: false
+		});
+	}
+
 }
