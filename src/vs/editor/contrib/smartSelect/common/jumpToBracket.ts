@@ -7,7 +7,6 @@
 import * as nls from 'vs/nls';
 import {KeyCode, KeyMod} from 'vs/base/common/keyCodes';
 import {TPromise} from 'vs/base/common/winjs.base';
-import {INullService} from 'vs/platform/instantiation/common/instantiation';
 import {EditorAction} from 'vs/editor/common/editorAction';
 import {Behaviour} from 'vs/editor/common/editorActionEnablement';
 import {Handler, ICommonCodeEditor, IEditorActionDescriptorData} from 'vs/editor/common/editorCommon';
@@ -17,7 +16,7 @@ class SelectBracketAction extends EditorAction {
 
 	static ID = 'editor.action.jumpToBracket';
 
-	constructor(descriptor:IEditorActionDescriptorData, editor:ICommonCodeEditor, @INullService ns) {
+	constructor(descriptor:IEditorActionDescriptorData, editor:ICommonCodeEditor) {
 		super(descriptor, editor, Behaviour.TextFocus);
 	}
 
@@ -34,4 +33,4 @@ class SelectBracketAction extends EditorAction {
 CommonEditorRegistry.registerEditorAction(new EditorActionDescriptor(SelectBracketAction, SelectBracketAction.ID, nls.localize('smartSelect.jumpBracket', "Go to Bracket"), {
 	context: ContextKey.EditorTextFocus,
 	primary: KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.US_BACKSLASH
-}));
+}, 'Go to Bracket'));

@@ -12,22 +12,23 @@ import arrays = require('vs/base/common/arrays');
 import Severity from 'vs/base/common/severity';
 import {Separator} from 'vs/base/browser/ui/actionbar/actionbar';
 import {IAction, Action} from 'vs/base/common/actions';
-import {OpenGlobalSettingsAction} from 'vs/workbench/browser/actions/openSettings';
 import {IPartService} from 'vs/workbench/services/part/common/partService';
-import {IStorageService, StorageScope} from 'vs/platform/storage/common/storage';
-import {IMessageService, CloseAction} from 'vs/platform/message/common/message';
+import {IMessageService} from 'vs/platform/message/common/message';
 import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
 import {ITelemetryService} from 'vs/platform/telemetry/common/telemetry';
 import {IContextMenuService} from 'vs/platform/contextview/browser/contextView';
-import {IKeybindingService} from 'vs/platform/keybinding/common/keybindingService';
+import {ICommandService} from 'vs/platform/commands/common/commands';
+import {IKeybindingService} from 'vs/platform/keybinding/common/keybinding';
 import {IWorkspaceContextService}from 'vs/workbench/services/workspace/common/contextService';
-import {IWindowService}from 'vs/workbench/services/window/electron-browser/windowService';
+import {IWindowService} from 'vs/workbench/services/window/electron-browser/windowService';
 import {IWindowConfiguration} from 'vs/workbench/electron-browser/window';
-import {IConfigurationService, IConfigurationServiceEvent, ConfigurationServiceEventTypes} from 'vs/platform/configuration/common/configuration';
-
-import win = require('vs/workbench/electron-browser/window');
+import {IConfigurationService} from 'vs/platform/configuration/common/configuration';
+import {ElectronWindow} from 'vs/workbench/electron-browser/window';
+import * as browser from 'vs/base/browser/browser';
 
 import {ipcRenderer as ipc, webFrame, remote} from 'electron';
+
+const currentWindow = remote.getCurrentWindow();
 
 const TextInputActions: IAction[] = [
 	new Action('undo', nls.localize('undo', "Undo"), null, true, () => document.execCommand('undo') && TPromise.as(true)),
@@ -49,8 +50,8 @@ export class ElectronIntegration {
 		@IWorkspaceContextService private contextService: IWorkspaceContextService,
 		@ITelemetryService private telemetryService: ITelemetryService,
 		@IConfigurationService private configurationService: IConfigurationService,
+		@ICommandService private commandService: ICommandService,
 		@IKeybindingService private keybindingService: IKeybindingService,
-		@IStorageService private storageService: IStorageService,
 		@IMessageService private messageService: IMessageService,
 		@IContextMenuService private contextMenuService: IContextMenuService
 	) {
@@ -59,12 +60,12 @@ export class ElectronIntegration {
 	public integrate(shellContainer: HTMLElement): void {
 
 		// Register the active window
-		let activeWindow = this.instantiationService.createInstance(win.ElectronWindow, remote.getCurrentWindow(), shellContainer);
+		let activeWindow = this.instantiationService.createInstance(ElectronWindow, currentWindow, shellContainer);
 		this.windowService.registerWindow(activeWindow);
 
 		// Support runAction event
 		ipc.on('vscode:runAction', (event, actionId: string) => {
-			this.keybindingService.executeCommand(actionId, { from: 'menu' }).done(undefined, err => this.messageService.show(Severity.Error, err));
+			this.commandService.executeCommand(actionId, { from: 'menu' }).done(undefined, err => this.messageService.show(Severity.Error, err));
 		});
 
 		// Support options change
@@ -112,14 +113,17 @@ export class ElectronIntegration {
 			ipc.send('vscode:workbenchLoaded', this.windowService.getWindowId());
 		});
 
-		// Theme changes
-		ipc.on('vscode:changeTheme', (event, theme: string) => {
-			this.storageService.store('workbench.theme', theme, StorageScope.GLOBAL);
+		// Message support
+		ipc.on('vscode:showInfoMessage', (event, message: string) => {
+			this.messageService.show(Severity.Info, message);
 		});
+
+		// Ensure others can listen to zoom level changes
+		browser.setZoomLevel(webFrame.getZoomLevel());
 
 		// Configuration changes
 		let previousConfiguredZoomLevel: number;
-		this.configurationService.addListener(ConfigurationServiceEventTypes.UPDATED, (e: IConfigurationServiceEvent) => {
+		this.configurationService.onDidUpdateConfiguration(e => {
 			let windowConfig: IWindowConfiguration = e.config;
 
 			let newZoomLevel = 0;
@@ -136,30 +140,8 @@ export class ElectronIntegration {
 
 			if (webFrame.getZoomLevel() !== newZoomLevel) {
 				webFrame.setZoomLevel(newZoomLevel);
+				browser.setZoomLevel(webFrame.getZoomLevel()); // Ensure others can listen to zoom level changes
 			}
-		});
-
-		// Auto Save Info (TODO@Ben remove me in a couple of versions)
-		ipc.on('vscode:showAutoSaveInfo', () => {
-			this.messageService.show(
-				Severity.Info, {
-					message: nls.localize('autoSaveInfo', "The enabled **File | Auto Save** menu option has become a setting **files.autoSave** with the value **afterDelay**."),
-					actions: [
-						CloseAction,
-						this.instantiationService.createInstance(OpenGlobalSettingsAction, OpenGlobalSettingsAction.ID, OpenGlobalSettingsAction.LABEL)
-					]
-				});
-		});
-
-		ipc.on('vscode:showAutoSaveError', () => {
-			this.messageService.show(
-				Severity.Warning, {
-					message: nls.localize('autoSaveError', "Unable to write to settings. Please add **files.autoSave: \"afterDelay\"** to settings.json."),
-					actions: [
-						CloseAction,
-						this.instantiationService.createInstance(OpenGlobalSettingsAction, OpenGlobalSettingsAction.ID, OpenGlobalSettingsAction.LABEL)
-					]
-				});
 		});
 
 		// Context menu support in input/textarea
@@ -174,7 +156,7 @@ export class ElectronIntegration {
 						getAnchor: () => target,
 						getActions: () => TPromise.as(TextInputActions),
 						getKeyBinding: (action) => {
-							var opts = this.keybindingService.lookupKeybindings(action.id);
+							const opts = this.keybindingService.lookupKeybindings(action.id);
 							if (opts.length > 0) {
 								return opts[0]; // only take the first one
 							}

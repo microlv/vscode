@@ -4,9 +4,9 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
+import * as nls from 'vs/nls';
 import Event, {Emitter} from 'vs/base/common/event';
 import {Registry} from 'vs/platform/platform';
-import {IWorkerParticipantDescriptor} from 'vs/editor/common/modes';
 import {ILanguageExtensionPoint} from 'vs/editor/common/services/modeService';
 
 export interface ILegacyLanguageDefinition {
@@ -18,6 +18,7 @@ export interface ILegacyLanguageDefinition {
 	mimetypes: string[];
 	moduleId: string;
 	ctorName: string;
+	deps?: string[];
 }
 
 // Define extension point ids
@@ -27,7 +28,6 @@ export var Extensions = {
 
 export class EditorModesRegistry {
 
-	private _workerParticipants: IWorkerParticipantDescriptor[];
 	private _compatModes: ILegacyLanguageDefinition[];
 	private _languages: ILanguageExtensionPoint[];
 
@@ -38,34 +38,8 @@ export class EditorModesRegistry {
 	public onDidAddLanguages: Event<ILanguageExtensionPoint[]> = this._onDidAddLanguages.event;
 
 	constructor() {
-		this._workerParticipants = [];
 		this._compatModes = [];
 		this._languages = [];
-	}
-
-	// --- worker participants
-
-	public registerWorkerParticipants(participants:IWorkerParticipantDescriptor[]): void {
-		this._workerParticipants = participants;
-	}
-	public registerWorkerParticipant(modeId:string, moduleId:string, ctorName?:string):void {
-		if (typeof modeId !== 'string') {
-			throw new Error('InvalidArgument: expected `modeId` to be a string');
-		}
-		if (typeof moduleId !== 'string') {
-			throw new Error('InvalidArgument: expected `moduleId` to be a string');
-		}
-		this._workerParticipants.push({
-			modeId: modeId,
-			moduleId: moduleId,
-			ctorName: ctorName
-		});
-	}
-	public getWorkerParticipantsForMode(modeId:string):IWorkerParticipantDescriptor[] {
-		return this._workerParticipants.filter(p => p.modeId === modeId);
-	}
-	public getWorkerParticipants(): IWorkerParticipantDescriptor[] {
-		return this._workerParticipants;
 	}
 
 	// --- compat modes
@@ -104,6 +78,6 @@ Registry.add(Extensions.ModesRegistry, ModesRegistry);
 ModesRegistry.registerLanguage({
 	id: 'plaintext',
 	extensions: ['.txt', '.gitignore'],
-	aliases: ['Plain Text', 'text'],
+	aliases: [nls.localize('plainText.alias', "Plain Text"), 'text'],
 	mimetypes: ['text/plain']
 });

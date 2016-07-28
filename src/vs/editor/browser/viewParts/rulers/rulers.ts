@@ -7,9 +7,11 @@
 
 import 'vs/css!./rulers';
 import {StyleMutator} from 'vs/base/browser/styleMutator';
-import {IConfigurationChangedEvent} from 'vs/editor/common/editorCommon';
-import {ILayoutProvider, IRenderingContext, IViewContext} from 'vs/editor/browser/editorBrowser';
+import * as editorCommon from 'vs/editor/common/editorCommon';
 import {ViewPart} from 'vs/editor/browser/view/viewPart';
+import {ViewContext} from 'vs/editor/common/view/viewContext';
+import {IRenderingContext, IRestrictedRenderingContext} from 'vs/editor/common/view/renderingContext';
+import {ILayoutProvider} from 'vs/editor/browser/viewLayout/layoutProvider';
 
 export class Rulers extends ViewPart {
 
@@ -19,14 +21,14 @@ export class Rulers extends ViewPart {
 	private _height: number;
 	private _typicalHalfwidthCharacterWidth: number;
 
-	constructor(context:IViewContext, layoutProvider:ILayoutProvider) {
+	constructor(context:ViewContext, layoutProvider:ILayoutProvider) {
 		super(context);
 		this._layoutProvider = layoutProvider;
 		this.domNode = document.createElement('div');
 		this.domNode.className = 'view-rulers';
-		this._rulers = this._context.configuration.editor.rulers;
+		this._rulers = this._context.configuration.editor.viewInfo.rulers;
 		this._height = this._context.configuration.editor.layoutInfo.contentHeight;
-		this._typicalHalfwidthCharacterWidth = this._context.configuration.editor.typicalHalfwidthCharacterWidth;
+		this._typicalHalfwidthCharacterWidth = this._context.configuration.editor.fontInfo.typicalHalfwidthCharacterWidth;
 	}
 
 	public dispose(): void {
@@ -35,42 +37,50 @@ export class Rulers extends ViewPart {
 
 	// --- begin event handlers
 
-	public onConfigurationChanged(e: IConfigurationChangedEvent): boolean {
-		if (e.rulers || e.layoutInfo || e.typicalHalfwidthCharacterWidth) {
-			this._rulers = this._context.configuration.editor.rulers;
+	public onConfigurationChanged(e: editorCommon.IConfigurationChangedEvent): boolean {
+		if (e.viewInfo.rulers || e.layoutInfo || e.fontInfo) {
+			this._rulers = this._context.configuration.editor.viewInfo.rulers;
 			this._height = this._context.configuration.editor.layoutInfo.contentHeight;
-			this._typicalHalfwidthCharacterWidth = this._context.configuration.editor.typicalHalfwidthCharacterWidth;
+			this._typicalHalfwidthCharacterWidth = this._context.configuration.editor.fontInfo.typicalHalfwidthCharacterWidth;
 			return true;
 		}
 		return false;
 	}
+	public onScrollChanged(e:editorCommon.IScrollEvent): boolean {
+		return super.onScrollChanged(e) || e.scrollHeightChanged;
+	}
 
 	// --- end event handlers
 
-	_render(ctx: IRenderingContext): void {
-		this._requestModificationFrame(() => {
-			let existingRulersLength = this.domNode.children.length;
-			let max = Math.max(existingRulersLength, this._rulers.length);
+	public prepareRender(ctx:IRenderingContext): void {
+		// Nothing to read
+		if (!this.shouldRender()) {
+			throw new Error('I did not ask to render!');
+		}
+	}
 
-			for (let i = 0; i < max; i++) {
+	public render(ctx:IRestrictedRenderingContext): void {
+		let existingRulersLength = this.domNode.children.length;
+		let max = Math.max(existingRulersLength, this._rulers.length);
 
-				if (i >= this._rulers.length) {
-					this.domNode.removeChild(this.domNode.lastChild);
-					continue;
-				}
+		for (let i = 0; i < max; i++) {
 
-				let node: HTMLElement;
-				if (i < existingRulersLength) {
-					node = <HTMLElement>this.domNode.children[i];
-				} else {
-					node = document.createElement('div');
-					node.className = 'view-ruler';
-					this.domNode.appendChild(node);
-				}
-
-				StyleMutator.setHeight(node, Math.min(this._layoutProvider.getTotalHeight(), 1000000));
-				StyleMutator.setLeft(node, this._rulers[i] * this._typicalHalfwidthCharacterWidth);
+			if (i >= this._rulers.length) {
+				this.domNode.removeChild(this.domNode.lastChild);
+				continue;
 			}
-		});
+
+			let node: HTMLElement;
+			if (i < existingRulersLength) {
+				node = <HTMLElement>this.domNode.children[i];
+			} else {
+				node = document.createElement('div');
+				node.className = 'view-ruler';
+				this.domNode.appendChild(node);
+			}
+
+			StyleMutator.setHeight(node, Math.min(this._layoutProvider.getTotalHeight(), 1000000));
+			StyleMutator.setLeft(node, this._rulers[i] * this._typicalHalfwidthCharacterWidth);
+		}
 	}
 }

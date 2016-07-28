@@ -16,7 +16,6 @@ import {CollapsibleView} from 'vs/base/browser/ui/splitview/splitview';
 import {Registry} from 'vs/platform/platform';
 import {IWorkbenchActionRegistry, Extensions} from 'vs/workbench/common/actionRegistry';
 import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
-import {StructuredSelection} from 'vs/platform/selection/common/selection';
 
 export class EmptyView extends CollapsibleView {
 
@@ -32,7 +31,7 @@ export class EmptyView extends CollapsibleView {
 		$('span').text(nls.localize('noWorkspace', "No Folder Opened")).appendTo(titleDiv);
 	}
 
-	public renderBody(container: HTMLElement): void {
+	protected renderBody(container: HTMLElement): void {
 		DOM.addClass(container, 'explorer-empty-view');
 
 		let titleDiv = $('div.section').appendTo(container);
@@ -42,9 +41,13 @@ export class EmptyView extends CollapsibleView {
 
 		let button = new Button(section);
 		button.label = nls.localize('openFolder', "Open Folder");
-		button.on('click', () => {
+		button.addListener2('click', () => {
 			this.runWorkbenchAction(env.isMacintosh ? 'workbench.action.files.openFileFolder' : 'workbench.action.files.openFolder');
 		});
+	}
+
+	protected layoutBody(size: number): void {
+		// no-op
 	}
 
 	private runWorkbenchAction(actionId: string): void {
@@ -60,20 +63,12 @@ export class EmptyView extends CollapsibleView {
 		return TPromise.as(null);
 	}
 
-	public refresh(focus: boolean, reveal: boolean, instantProgress?: boolean): TPromise<void> {
-		return TPromise.as(null);
-	}
-
 	public setVisible(visible: boolean): TPromise<void> {
 		return TPromise.as(null);
 	}
 
 	public focusBody(): void {
 		// Ignore
-	}
-
-	public getSelection(): StructuredSelection {
-		return new StructuredSelection([]);
 	}
 
 	protected reveal(element: any, relativeTop?: number): TPromise<void> {

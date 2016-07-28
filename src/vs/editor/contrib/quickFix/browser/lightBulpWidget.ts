@@ -4,9 +4,10 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import {IDisposable, disposeAll} from 'vs/base/common/lifecycle';
+import {IDisposable, dispose} from 'vs/base/common/lifecycle';
 import * as dom from 'vs/base/browser/dom';
 import {IPosition} from 'vs/editor/common/editorCommon';
+import {Position} from 'vs/editor/common/core/position';
 import {ContentWidgetPositionPreference, ICodeEditor, IContentWidget, IContentWidgetPosition} from 'vs/editor/browser/editorBrowser';
 
 export class LightBulpWidget implements IContentWidget, IDisposable {
@@ -30,7 +31,7 @@ export class LightBulpWidget implements IContentWidget, IDisposable {
 
 	public dispose(): void {
 		this.editor.removeContentWidget(this);
-		this.toDispose = disposeAll(this.toDispose);
+		this.toDispose = dispose(this.toDispose);
 	}
 
 	public getId(): string {
@@ -58,6 +59,10 @@ export class LightBulpWidget implements IContentWidget, IDisposable {
 	}
 
 	public show(where:IPosition): void {
+		if (this.visible && Position.equals(this.position, where)) {
+			return;
+		}
+
 		this.position = where;
 
 		this.visible = true;
@@ -65,6 +70,10 @@ export class LightBulpWidget implements IContentWidget, IDisposable {
 	}
 
 	public hide(): void {
+		if (!this.visible) {
+			return;
+		}
+
 		this.visible = false;
 		this.editor.layoutContentWidget(this);
 	}

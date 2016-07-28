@@ -16,6 +16,7 @@ var hasOwnProperty = Object.prototype.hasOwnProperty;
 export interface ICompatModeDescriptor {
 	moduleId: string;
 	ctorName: string;
+	deps: string[];
 }
 
 export class LanguagesRegistry {
@@ -23,8 +24,8 @@ export class LanguagesRegistry {
 	private knownModeIds: { [id: string]: boolean; };
 	private mime2LanguageId: { [mimeType: string]: string; };
 	private name2LanguageId: { [name: string]: string; };
-	private name2Extensions: { [name: string]: string[]; };
 	private id2Name: { [id: string]: string; };
+	private id2Extensions: { [id: string]: string[]; };
 	private compatModes: { [id: string]: ICompatModeDescriptor; };
 	private lowerName2Id: { [name: string]: string; };
 	private id2ConfigurationFiles: { [id:string]: string[]; };
@@ -32,24 +33,26 @@ export class LanguagesRegistry {
 	private _onDidAddModes: Emitter<string[]> = new Emitter<string[]>();
 	public onDidAddModes: Event<string[]> = this._onDidAddModes.event;
 
-	constructor() {
+	constructor(useModesRegistry = true) {
 		this.knownModeIds = {};
 		this.mime2LanguageId = {};
 		this.name2LanguageId = {};
 		this.id2Name = {};
-		this.name2Extensions = {};
+		this.id2Extensions = {};
 		this.compatModes = {};
 		this.lowerName2Id = {};
 		this.id2ConfigurationFiles = {};
 
-		this._registerCompatModes(ModesRegistry.getCompatModes());
-		ModesRegistry.onDidAddCompatModes((m) => this._registerCompatModes(m));
+		if (useModesRegistry) {
+			this._registerCompatModes(ModesRegistry.getCompatModes());
+			ModesRegistry.onDidAddCompatModes((m) => this._registerCompatModes(m));
 
-		this._registerLanguages(ModesRegistry.getLanguages());
-		ModesRegistry.onDidAddLanguages((m) => this._registerLanguages(m));
+			this._registerLanguages(ModesRegistry.getLanguages());
+			ModesRegistry.onDidAddLanguages((m) => this._registerLanguages(m));
+		}
 	}
 
-	private _registerCompatModes(defs:ILegacyLanguageDefinition[]): void {
+	_registerCompatModes(defs:ILegacyLanguageDefinition[]): void {
 		let addedModes: string[] = [];
 		for (let i = 0; i < defs.length; i++) {
 			let def = defs[i];
@@ -65,7 +68,8 @@ export class LanguagesRegistry {
 
 			this.compatModes[def.id] = {
 				moduleId: def.moduleId,
-				ctorName: def.ctorName
+				ctorName: def.ctorName,
+				deps: def.deps
 			};
 
 			addedModes.push(def.id);
@@ -73,13 +77,26 @@ export class LanguagesRegistry {
 		this._onDidAddModes.fire(addedModes);
 	}
 
-	private _registerLanguages(desc:ILanguageExtensionPoint[]): void {
+	_registerLanguages(desc:ILanguageExtensionPoint[]): void {
 		let addedModes: string[] = [];
 		for (let i = 0; i < desc.length; i++) {
 			this._registerLanguage(desc[i]);
 			addedModes.push(desc[i].id);
 		}
 		this._onDidAddModes.fire(addedModes);
+	}
+
+	private _setLanguageName(languageId:string, languageName:string, force:boolean): void {
+		let prevName = this.id2Name[languageId];
+		if (prevName) {
+			if (!force) {
+				return;
+			}
+			delete this.name2LanguageId[prevName];
+		}
+
+		this.name2LanguageId[languageName] = languageId;
+		this.id2Name[languageId] = languageName;
 	}
 
 	private _registerLanguage(lang: ILanguageExtensionPoint): void {
@@ -102,20 +119,22 @@ export class LanguagesRegistry {
 		}
 
 		if (Array.isArray(lang.extensions)) {
+			this.id2Extensions[lang.id] = this.id2Extensions[lang.id] || [];
 			for (let extension of lang.extensions) {
-				mime.registerTextMimeByFilename(extension, primaryMime);
+				mime.registerTextMime({ mime: primaryMime, extension: extension });
+				this.id2Extensions[lang.id].push(extension);
 			}
 		}
 
 		if (Array.isArray(lang.filenames)) {
 			for (let filename of lang.filenames) {
-				mime.registerTextMimeByFilename(filename, primaryMime);
+				mime.registerTextMime({ mime: primaryMime, filename: filename });
 			}
 		}
 
 		if (Array.isArray(lang.filenamePatterns)) {
 			for (let filenamePattern of lang.filenamePatterns) {
-				mime.registerTextMimeByFilename(filenamePattern, primaryMime);
+				mime.registerTextMime({ mime: primaryMime, filepattern: filenamePattern });
 			}
 		}
 
@@ -127,7 +146,7 @@ export class LanguagesRegistry {
 			try {
 				var firstLineRegex = new RegExp(firstLineRegexStr);
 				if (!strings.regExpLeadsToEndlessLoop(firstLineRegex)) {
-					mime.registerTextMimeByFirstLine(firstLineRegex, primaryMime);
+					mime.registerTextMime({ mime: primaryMime, firstline: firstLineRegex });
 				}
 			} catch (err) {
 				// Most likely, the regex was bad
@@ -135,21 +154,24 @@ export class LanguagesRegistry {
 			}
 		}
 
-		var bestName: string = null;
+		this.lowerName2Id[lang.id.toLowerCase()] = lang.id;
+
 		if (typeof lang.aliases !== 'undefined' && Array.isArray(lang.aliases)) {
 			for (var i = 0; i < lang.aliases.length; i++) {
 				if (!lang.aliases[i] || lang.aliases[i].length === 0) {
 					continue;
 				}
-				if (!bestName) {
-					bestName = lang.aliases[i];
-					this.name2LanguageId[lang.aliases[i]] = lang.id;
-					this.name2Extensions[lang.aliases[i]] = lang.extensions;
-				}
 				this.lowerName2Id[lang.aliases[i].toLowerCase()] = lang.id;
 			}
 		}
-		this.id2Name[lang.id] = bestName || '';
+
+		let containsAliases = (typeof lang.aliases !== 'undefined' && Array.isArray(lang.aliases) && lang.aliases.length > 0);
+		if (containsAliases && lang.aliases[0] === null) {
+			// signal that this language should not get a name
+		} else {
+			let bestName = (containsAliases ? lang.aliases[0] : null) || lang.id;
+			this._setLanguageName(lang.id, bestName, containsAliases);
+		}
 
 		if (typeof lang.configuration === 'string') {
 			this.id2ConfigurationFiles[lang.id] = this.id2ConfigurationFiles[lang.id] || [];
@@ -187,12 +209,12 @@ export class LanguagesRegistry {
 	}
 
 	public getMimeForMode(theModeId: string): string {
-		for (var _mime in this.mime2LanguageId) {
-			if (this.mime2LanguageId.hasOwnProperty(_mime)) {
-				var modeId = this.mime2LanguageId[_mime];
-				if (modeId === theModeId) {
-					return _mime;
-				}
+		let keys = Object.keys(this.mime2LanguageId);
+		for (let i = 0, len = keys.length; i < len; i++) {
+			let _mime = keys[i];
+			let modeId = this.mime2LanguageId[_mime];
+			if (modeId === theModeId) {
+				return _mime;
 			}
 		}
 
@@ -242,6 +264,10 @@ export class LanguagesRegistry {
 	}
 
 	public getExtensions(languageName: string): string[] {
-		return this.name2Extensions[languageName];
+		let languageId = this.name2LanguageId[languageName];
+		if (!languageId) {
+			return [];
+		}
+		return this.id2Extensions[languageId];
 	}
 }

@@ -12,37 +12,29 @@ var uglify = require('gulp-uglify');
 var es = require('event-stream');
 var concat = require('gulp-concat');
 var File = require('vinyl');
-var underscore = require('underscore');
 var bundle = require('./lib/bundle');
 var util = require('./lib/util');
+var i18n = require('./lib/i18n');
+var gulpUtil = require('gulp-util');
+
+function log(prefix, message) {
+	gulpUtil.log(gulpUtil.colors.cyan('[' + prefix + ']'), message);
+}
+
 var root = path.dirname(__dirname);
 var commit = util.getVersion(root);
-
-var tsOptions = {
-	target: 'ES5',
-	module: 'amd',
-	verbose: true,
-	preserveConstEnums: true,
-	experimentalDecorators: true,
-	sourceMap: true,
-	rootDir: path.join(path.dirname(__dirname), 'src')
-};
 
 exports.loaderConfig = function (emptyPaths) {
 	var result = {
 		paths: {
 			'vs': 'out-build/vs',
-			'vs/extensions': 'extensions',
 			'vscode': 'empty:'
 		},
-		'vs/text': {
-			paths: {
-				'vs/extensions': 'extensions'
-			}
-		}
+		nodeModules: emptyPaths||[],
 	};
 
-	(emptyPaths || []).forEach(function(m) { result.paths[m] = 'empty:'; });
+	result['vs/css'] = { inlineResources: true };
+
 	return result;
 };
 
@@ -54,7 +46,6 @@ function loader(bundledFileHeader) {
 		'out-build/vs/loader.js',
 		'out-build/vs/css.js',
 		'out-build/vs/nls.js',
-		'out-build/vs/text.js'
 	], { base: 'out-build' })
 		.pipe(es.through(function(data) {
 			if (isFirst) {
@@ -72,7 +63,7 @@ function loader(bundledFileHeader) {
 		.pipe(util.loadSourcemaps())
 		.pipe(concat('vs/loader.js'))
 		.pipe(es.mapSync(function (f) {
-			f.sourceMap.sourceRoot = util.toFileUri(tsOptions.rootDir);
+			f.sourceMap.sourceRoot = util.toFileUri(path.join(path.dirname(__dirname), 'src'));
 			return f;
 		}));
 }
@@ -127,6 +118,7 @@ function toBundleStream(bundledFileHeader, bundles) {
  * - resources (svg, etc.)
  * - loaderConfig
  * - header (basically the Copyright treatment)
+ * - bundleInfo (boolean - emit bundleInfo.json file)
  * - out (out folder name)
  */
 exports.optimizeTask = function(opts) {
@@ -138,12 +130,35 @@ exports.optimizeTask = function(opts) {
 	var out = opts.out;
 
 	return function() {
-		var bundlesStream = es.through();
+		var bundlesStream = es.through(); // this stream will contain the bundled files
+		var resourcesStream = es.through(); // this stream will contain the resources
+		var bundleInfoStream = es.through(); // this stream will contain bundleInfo.json
 
 		bundle.bundle(entryPoints, loaderConfig, function(err, result) {
 			if (err) { return bundlesStream.emit('error', JSON.stringify(err)); }
 
-			toBundleStream(bundledFileHeader, result).pipe(bundlesStream);
+			toBundleStream(bundledFileHeader, result.files).pipe(bundlesStream);
+
+			// Remove css inlined resources
+			var filteredResources = [];
+			filteredResources = filteredResources.concat(resources);
+			result.cssInlinedResources.forEach(function(resource) {
+				if (process.env['VSCODE_BUILD_VERBOSE']) {
+					log('optimizer', 'excluding inlined: ' + resource);
+				}
+				filteredResources.push('!' + resource);
+			});
+			gulp.src(filteredResources, { base: 'out-build' }).pipe(resourcesStream);
+
+			var bundleInfoArray = [];
+			if (opts.bundleInfo) {
+				bundleInfoArray.push(new File({
+					path: 'bundleInfo.json',
+					base: '.',
+					contents: new Buffer(JSON.stringify(result.bundleData, null, '\t'))
+				}));
+			}
+			es.readArray(bundleInfoArray).pipe(bundleInfoStream);
 		});
 
 		var otherSourcesStream = es.through();
@@ -164,7 +179,8 @@ exports.optimizeTask = function(opts) {
 			loader(bundledFileHeader),
 			bundlesStream,
 			otherSourcesStream,
-			gulp.src(resources, { base: 'out-build' })
+			resourcesStream,
+			bundleInfoStream
 		);
 
 		return result
@@ -172,6 +188,9 @@ exports.optimizeTask = function(opts) {
 				sourceRoot: null,
 				addComment: true,
 				includeContent: true
+			}))
+			.pipe(i18n.processNlsFiles({
+				fileHeader: bundledFileHeader
 			}))
 			.pipe(gulp.dest(out));
 	};
@@ -242,7 +261,7 @@ exports.minifyTask = function (src, addSourceMapsComment) {
 			.pipe(uglifyWithCopyrights())
 			.pipe(jsFilter.restore)
 			.pipe(cssFilter)
-			.pipe(minifyCSS())
+			.pipe(minifyCSS({ reduceIdents: false }))
 			.pipe(cssFilter.restore)
 			.pipe(sourcemaps.write('./', {
 				sourceMappingURL: function (file) {

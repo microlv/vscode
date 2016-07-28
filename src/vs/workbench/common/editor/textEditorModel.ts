@@ -5,18 +5,17 @@
 'use strict';
 
 import {TPromise} from 'vs/base/common/winjs.base';
-import types = require('vs/base/common/types');
-import {EndOfLinePreference, IModel, EventType} from 'vs/editor/common/editorCommon';
+import {EndOfLinePreference, IModel, IRawText} from 'vs/editor/common/editorCommon';
 import {IMode} from 'vs/editor/common/modes';
 import {EditorModel} from 'vs/workbench/common/editor';
 import URI from 'vs/base/common/uri';
-import {NullMode} from 'vs/editor/common/modes/nullMode';
 import {ITextEditorModel} from 'vs/platform/editor/common/editor';
 import {IModeService} from 'vs/editor/common/services/modeService';
 import {IModelService} from 'vs/editor/common/services/modelService';
+import {RawText} from 'vs/editor/common/model/textModel';
 
 /**
- * The base text editor model leverages the monaco code editor model. This class is only intended to be subclassed and not instantiated.
+ * The base text editor model leverages the code editor model. This class is only intended to be subclassed and not instantiated.
  */
 export abstract class BaseTextEditorModel extends EditorModel implements ITextEditorModel {
 	private textEditorModelHandle: URI;
@@ -41,9 +40,9 @@ export abstract class BaseTextEditorModel extends EditorModel implements ITextEd
 
 			// Since we did not create the model, we need to listen to it disposing
 			// and properly trigger our dispose function so that events get emitted
-			const unbind = model.addListener(EventType.ModelDispose, () => {
+			const unbind = model.onWillDispose(() => {
 				this.textEditorModelHandle = null; // make sure we do not dispose code editor model again
-				unbind();
+				unbind.dispose();
 				this.dispose();
 			});
 		}
@@ -56,36 +55,54 @@ export abstract class BaseTextEditorModel extends EditorModel implements ITextEd
 	/**
 	 * Creates the text editor model with the provided value, mime (can be comma separated for multiple values) and optional resource URL.
 	 */
-	protected createTextEditorModel(value: string, resource?: URI, mime?: string): TPromise<EditorModel> {
+	protected createTextEditorModel(value: string | IRawText, resource?: URI, mime?: string): TPromise<EditorModel> {
 		let firstLineText = this.getFirstLineText(value);
+		let mode = this.getOrCreateMode(this.modeService, mime, firstLineText);
 
 		// To avoid flickering, give the mode at most 50ms to load. If the mode doesn't load in 50ms, proceed creating the model with a mode promise
-		return TPromise.any<any>([TPromise.timeout(50), this.getOrCreateMode(this.modeService, mime, firstLineText)]).then(() => {
-			let model = this.modelService.createModel(value, this.getOrCreateMode(this.modeService, mime, firstLineText), resource);
-			this.createdEditorModel = true;
-
-			this.textEditorModelHandle = model.getAssociatedResource();
-
-			return this;
+		return TPromise.any<any>([TPromise.timeout(50), mode]).then(() => {
+			return this.doCreateTextEditorModel(value, mode, resource);
 		});
 	}
 
-	private getFirstLineText(value: string): string {
-		let firstLineText = value.substr(0, 100);
-
-		let crIndex = firstLineText.indexOf('\r');
-		if (crIndex < 0) {
-			crIndex = firstLineText.length;
+	private doCreateTextEditorModel(value: string | IRawText, mode: TPromise<IMode>, resource: URI): EditorModel {
+		let model = resource && this.modelService.getModel(resource);
+		if (!model) {
+			model = this.modelService.createModel(value, mode, resource);
+			this.createdEditorModel = true;
+		} else {
+			if (typeof value === 'string') {
+				model.setValue(value);
+			} else {
+				model.setValueFromRawText(value);
+			}
+			
+			model.setMode(mode);
 		}
 
-		let lfIndex = firstLineText.indexOf('\n');
-		if (lfIndex < 0) {
-			lfIndex = firstLineText.length;
+		this.textEditorModelHandle = model.uri;
+
+		return this;
+	}
+
+	private getFirstLineText(value: string | IRawText): string {
+		if (typeof value === 'string') {
+			let firstLineText = value.substr(0, 100);
+
+			let crIndex = firstLineText.indexOf('\r');
+			if (crIndex < 0) {
+				crIndex = firstLineText.length;
+			}
+
+			let lfIndex = firstLineText.indexOf('\n');
+			if (lfIndex < 0) {
+				lfIndex = firstLineText.length;
+			}
+
+			return firstLineText.substr(0, Math.min(crIndex, lfIndex));
+		} else {
+			return value.lines[0].substr(0, 100);
 		}
-
-		firstLineText = firstLineText.substr(0, Math.min(crIndex, lfIndex));
-
-		return firstLineText;
 	}
 
 	/**
@@ -98,32 +115,27 @@ export abstract class BaseTextEditorModel extends EditorModel implements ITextEd
 	}
 
 	/**
-	 * Updates the text editor model with the provided value and mime (can be comma separated for multiple values).
-	 *
-	 * This is a no-op if neither the value did not change nor the mime.
+	 * Updates the text editor model with the provided value. If the value is the same as the model has, this is a no-op.
 	 */
-	protected updateTextEditorModel(newValue?: string, newMime?: string): void {
-		// Detect content changes
-		let currentModelValue = this.getValue();
-		let valueChanged = (!types.isUndefinedOrNull(newValue) && currentModelValue !== newValue);
-
-		// Detect mode changes
-		let modeChanged = false;
-		if (!types.isUndefinedOrNull(newMime)) {
-			let modeId = this.modeService.getModeId(newMime);
-			let currentMode = this.textEditorModel.getMode();
-			if (currentMode && currentMode.getId() !== NullMode.ID && modeId) {
-				let currentModeId = currentMode.getId();
-				modeChanged = (currentModeId !== modeId);
-			}
+	protected updateTextEditorModel(newValue: string | IRawText): void {
+		if (!this.textEditorModel) {
+			return;
 		}
 
-		// Apply either content or mode or both
-		if (valueChanged) {
-			this.textEditorModel.setValue(newValue, modeChanged ? this.getOrCreateMode(this.modeService, newMime) : undefined);
-		} else if (modeChanged) {
-			this.textEditorModel.setMode(this.getOrCreateMode(this.modeService, newMime));
+		let rawText: IRawText;
+		if (typeof newValue === 'string') {
+			rawText = RawText.fromStringWithModelOptions(newValue, this.textEditorModel);
+		} else {
+			rawText = newValue;
 		}
+
+		// Return early if the text is already set in that form
+		if (this.textEditorModel.equals(rawText)) {
+			return;
+		}
+
+		// Otherwise update model
+		this.textEditorModel.setValueFromRawText(rawText);
 	}
 
 	/**

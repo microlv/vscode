@@ -5,7 +5,8 @@
 'use strict';
 
 import Assert = require('vs/base/common/assert');
-import { IDisposable, combinedDispose } from 'vs/base/common/lifecycle';
+import { onUnexpectedError } from 'vs/base/common/errors';
+import { IDisposable, combinedDisposable } from 'vs/base/common/lifecycle';
 import arrays = require('vs/base/common/arrays');
 import { INavigator } from 'vs/base/common/iterator';
 import Events = require('vs/base/common/eventEmitter');
@@ -80,13 +81,13 @@ export class Lock {
 		var lock = this.getLock(item);
 
 		if (lock) {
-			var unbindListener: Events.ListenerUnbind;
+			var unbindListener: IDisposable;
 
 			return new WinJS.Promise((c, e) => {
-				unbindListener = lock.addOneTimeListener('unlock', () => {
+				unbindListener = lock.addOneTimeDisposableListener('unlock', () => {
 					return this.run(item, fn).then(c, e);
 				});
-			}, () => unbindListener());
+			}, () => { unbindListener.dispose(); });
 		}
 
 		var result: WinJS.Promise;
@@ -127,6 +128,7 @@ export class Lock {
 
 export class ItemRegistry extends Events.EventEmitter {
 
+	private _isDisposed = false;
 	private items: IMap<{ item: Item; disposable: IDisposable; }>;
 
 	constructor() {
@@ -156,7 +158,12 @@ export class ItemRegistry extends Events.EventEmitter {
 
 	public dispose(): void {
 		super.dispose();
-		delete this.items;
+		this.items = null;
+		this._isDisposed = true;
+	}
+
+	public isDisposed(): boolean {
+		return this._isDisposed;
 	}
 }
 
@@ -389,7 +396,11 @@ export class Item extends Events.EventEmitter {
 				childrenPromise = WinJS.TPromise.as([]);
 			}
 
-			return childrenPromise.then((elements: any[]) => {
+			const result = childrenPromise.then((elements: any[]) => {
+				if (this.isDisposed() || this.registry.isDisposed()) {
+					return WinJS.TPromise.as(null);
+				}
+
 				elements = !elements ? [] : elements.slice(0);
 				elements = this.sort(elements);
 
@@ -424,9 +435,11 @@ export class Item extends Events.EventEmitter {
 				} else {
 					return WinJS.TPromise.as(null);
 				}
-			}).then(() => {
-				this.emit('item:childrenRefreshed', eventData);
 			});
+
+			return result
+				.then(null, onUnexpectedError)
+				.then(() => this.emit('item:childrenRefreshed', eventData));
 		};
 
 		return safe ? doRefresh() : this.lock.run(this, doRefresh);
@@ -571,11 +584,11 @@ export class Item extends Events.EventEmitter {
 	public dispose(): void {
 		this.forEachChild((child) => child.dispose());
 
-		delete this.parent;
-		delete this.previous;
-		delete this.next;
-		delete this.firstChild;
-		delete this.lastChild;
+		this.parent = null;
+		this.previous = null;
+		this.next = null;
+		this.firstChild = null;
+		this.lastChild = null;
 
 		var eventData: IItemDisposeEvent = { item: this };
 		this.emit('item:dispose', eventData);
@@ -801,13 +814,13 @@ export class TreeModel extends Events.EventEmitter {
 
 		this.registry = new ItemRegistry();
 
-		this.registryDisposable = combinedDispose(
+		this.registryDisposable = combinedDisposable([
 			this.addEmitter2(this.registry),
 			this.registry.addListener2('item:dispose', (event: IItemDisposeEvent) => {
 				event.item.getAllTraits()
 					.forEach(trait => delete this.traitsToItems[trait][event.item.id]);
 			})
-		);
+		]);
 
 		var id = this.context.dataSource.getId(this.context.tree, element);
 		this.input = new RootItem(id, this.registry, this.context, this.lock, element);
@@ -1184,6 +1197,17 @@ export class TreeModel extends Events.EventEmitter {
 		}
 	}
 
+	public focusFirstChild(eventPayload?: any): void {
+		const item = this.getItem(this.getFocus() || this.input);
+		const nav = this.getNavigator(item, false);
+		const next = nav.next();
+		const parent = nav.parent();
+
+		if (parent === item) {
+			this.setFocus(next, eventPayload);
+		}
+	}
+
 	public focusFirst(eventPayload?: any): void {
 		this.focusNth(0, eventPayload);
 	}
@@ -1213,7 +1237,7 @@ export class TreeModel extends Events.EventEmitter {
 		return new TreeNavigator(this.getItem(element), subTreeOnly);
 	}
 
-	private getItem(element: any = null): Item {
+	public getItem(element: any = null): Item {
 		if (element === null) {
 			return this.input;
 		} else if (element instanceof Item) {

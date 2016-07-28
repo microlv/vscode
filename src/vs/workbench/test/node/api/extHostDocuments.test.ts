@@ -13,7 +13,7 @@ import {Range as CodeEditorRange} from 'vs/editor/common/core/range';
 import * as EditorCommon from 'vs/editor/common/editorCommon';
 
 
-suite("PluginHostDocument", () => {
+suite('ExtHostDocument', () => {
 
 	let data: ExtHostDocumentData;
 
@@ -46,7 +46,7 @@ suite("PluginHostDocument", () => {
 		assert.throws(() => data.document.isUntitled = false);
 		assert.throws(() => data.document.languageId = 'dddd');
 		assert.throws(() => data.document.lineCount = 9);
-	})
+	});
 
 	test('lines', function() {
 
@@ -84,6 +84,25 @@ suite("PluginHostDocument", () => {
 		line = data.lineAt(0);
 		assert.equal(line.text, '\t This is line one');
 		assert.equal(line.firstNonWhitespaceCharacterIndex, 2);
+	});
+
+	test('line, issue #5704', function () {
+
+		let line = data.document.lineAt(0);
+		let {range, rangeIncludingLineBreak} = line;
+		assert.equal(range.end.line, 0);
+		assert.equal(range.end.character, 16);
+		assert.equal(rangeIncludingLineBreak.end.line, 1);
+		assert.equal(rangeIncludingLineBreak.end.character, 0);
+
+		line = data.document.lineAt(data.document.lineCount - 1);
+		range = line.range;
+		rangeIncludingLineBreak = line.rangeIncludingLineBreak;
+		assert.equal(range.end.line, 3);
+		assert.equal(range.end.character, 29);
+		assert.equal(rangeIncludingLineBreak.end.line, 3);
+		assert.equal(rangeIncludingLineBreak.end.character, 29);
+
 	});
 
 	test('offsetAt', function() {
@@ -170,7 +189,7 @@ suite("PluginHostDocument", () => {
 		assertOffsetAt(0, 1, 1);
 		assertOffsetAt(0, 2, 2);
 		assertOffsetAt(1, 0, 25);
-	})
+	});
 
 	test('positionAt', function() {
 		assertPositionAt(0, 0, 0);
@@ -192,7 +211,7 @@ enum AssertDocumentLineMappingDirection {
 	PositionToOffset
 }
 
-suite("PluginHostDocument updates line mapping", () => {
+suite('ExtHostDocument updates line mapping', () => {
 
 	function positionToStr(position: { line: number; character: number;}): string {
 		return '(' + position.line + ',' + position.character + ')';

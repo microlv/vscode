@@ -7,19 +7,23 @@
 import {TPromise} from 'vs/base/common/winjs.base';
 import nls = require('vs/nls');
 import URI from 'vs/base/common/uri';
+import network = require('vs/base/common/network');
 import labels = require('vs/base/common/labels');
 import {Registry} from 'vs/platform/platform';
 import {Action} from 'vs/base/common/actions';
+import strings = require('vs/base/common/strings');
 import {IWorkbenchActionRegistry, Extensions} from 'vs/workbench/common/actionRegistry';
 import {StringEditorInput} from 'vs/workbench/common/editor/stringEditorInput';
 import {getDefaultValuesContent} from 'vs/platform/configuration/common/model';
 import {IWorkbenchEditorService} from 'vs/workbench/services/editor/common/editorService';
 import {IWorkspaceContextService} from 'vs/workbench/services/workspace/common/contextService';
 import {IConfigurationService} from 'vs/platform/configuration/common/configuration';
-import {Position, IEditor} from 'vs/platform/editor/common/editor';
+import {Position} from 'vs/platform/editor/common/editor';
+import {IEditorGroupService} from 'vs/workbench/services/group/common/groupService';
+import {IStorageService, StorageScope} from 'vs/platform/storage/common/storage';
 import {IFileService, IFileOperationResult, FileOperationResult} from 'vs/platform/files/common/files';
 import {IMessageService, Severity, CloseAction} from 'vs/platform/message/common/message';
-import {IKeybindingService} from 'vs/platform/keybinding/common/keybindingService';
+import {IKeybindingService} from 'vs/platform/keybinding/common/keybinding';
 import {SyncActionDescriptor} from 'vs/platform/actions/common/actions';
 import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
 import {KeyMod, KeyCode} from 'vs/base/common/keyCodes';
@@ -30,6 +34,7 @@ export class BaseTwoEditorsAction extends Action {
 		id: string,
 		label: string,
 		@IWorkbenchEditorService protected editorService: IWorkbenchEditorService,
+		@IEditorGroupService private editorGroupService: IEditorGroupService,
 		@IFileService protected fileService: IFileService,
 		@IConfigurationService protected configurationService: IConfigurationService,
 		@IMessageService protected messageService: IMessageService,
@@ -54,13 +59,18 @@ export class BaseTwoEditorsAction extends Action {
 		});
 	}
 
-	protected openTwoEditors(leftHandDefaultInput: StringEditorInput, editableResource: URI, defaultEditableContents: string): TPromise<IEditor> {
+	protected openTwoEditors(leftHandDefaultInput: StringEditorInput, editableResource: URI, defaultEditableContents: string): TPromise<void> {
 
 		// Create as needed and open in editor
 		return this.createIfNotExists(editableResource, defaultEditableContents).then(() => {
-			return this.editorService.inputToType({ resource: editableResource }).then((typedRightHandEditableInput) => {
-				return this.editorService.setEditors([leftHandDefaultInput, typedRightHandEditableInput]).then(() => {
-					return this.editorService.focusEditor(Position.CENTER);
+			return this.editorService.createInput({ resource: editableResource }).then((typedRightHandEditableInput) => {
+				const editors = [
+					{ input: leftHandDefaultInput, position: Position.LEFT, options: { pinned: true } },
+					{ input: typedRightHandEditableInput, position: Position.CENTER, options: { pinned: true } }
+				];
+
+				return this.editorService.openEditors(editors).then(() => {
+					this.editorGroupService.focusGroup(Position.CENTER);
 				});
 			});
 		});
@@ -73,6 +83,7 @@ export class BaseOpenSettingsAction extends BaseTwoEditorsAction {
 		id: string,
 		label: string,
 		@IWorkbenchEditorService editorService: IWorkbenchEditorService,
+		@IEditorGroupService editorGroupService: IEditorGroupService,
 		@IFileService fileService: IFileService,
 		@IConfigurationService configurationService: IConfigurationService,
 		@IMessageService messageService: IMessageService,
@@ -80,37 +91,59 @@ export class BaseOpenSettingsAction extends BaseTwoEditorsAction {
 		@IKeybindingService keybindingService: IKeybindingService,
 		@IInstantiationService instantiationService: IInstantiationService
 	) {
-		super(id, label, editorService, fileService, configurationService, messageService, contextService, keybindingService, instantiationService);
+		super(id, label, editorService, editorGroupService, fileService, configurationService, messageService, contextService, keybindingService, instantiationService);
 	}
 
-	protected open(emptySettingsContents: string, settingsResource: URI): TPromise<IEditor> {
-		return this.openTwoEditors(DefaultSettingsInput.getInstance(this.instantiationService), settingsResource, emptySettingsContents);
+	protected open(emptySettingsContents: string, settingsResource: URI): TPromise<void> {
+		return this.openTwoEditors(DefaultSettingsInput.getInstance(this.instantiationService, this.configurationService), settingsResource, emptySettingsContents);
 	}
 }
 
 export class OpenGlobalSettingsAction extends BaseOpenSettingsAction {
+
 	public static ID = 'workbench.action.openGlobalSettings';
 	public static LABEL = nls.localize('openGlobalSettings', "Open User Settings");
 
-	public run(event?: any): TPromise<IEditor> {
+	private static SETTINGS_INFO_IGNORE_KEY = 'settings.workspace.info.ignore';
+
+	constructor(
+		id: string,
+		label: string,
+		@IWorkbenchEditorService editorService: IWorkbenchEditorService,
+		@IEditorGroupService editorGroupService: IEditorGroupService,
+		@IFileService fileService: IFileService,
+		@IConfigurationService configurationService: IConfigurationService,
+		@IMessageService messageService: IMessageService,
+		@IWorkspaceContextService contextService: IWorkspaceContextService,
+		@IKeybindingService keybindingService: IKeybindingService,
+		@IInstantiationService instantiationService: IInstantiationService,
+		@IStorageService private storageService: IStorageService
+	) {
+		super(id, label, editorService, editorGroupService, fileService, configurationService, messageService, contextService, keybindingService, instantiationService);
+	}
+
+	public run(event?: any): TPromise<void> {
 
 		// Inform user about workspace settings
-		if (this.configurationService.hasWorkspaceConfiguration()) {
-			let hide = this.messageService.show(Severity.Info, {
+		if (this.configurationService.hasWorkspaceConfiguration() && !this.storageService.getBoolean(OpenGlobalSettingsAction.SETTINGS_INFO_IGNORE_KEY, StorageScope.WORKSPACE)) {
+			this.messageService.show(Severity.Info, {
 				message: nls.localize('workspaceHasSettings', "The currently opened folder contains workspace settings that may override user settings"),
 				actions: [
 					CloseAction,
+					new Action('neverShowAgain', nls.localize('neverShowAgain', "Don't show again"), null, true, () => {
+						this.storageService.store(OpenGlobalSettingsAction.SETTINGS_INFO_IGNORE_KEY, true, StorageScope.WORKSPACE);
+
+						return TPromise.as(true);
+					}),
 					new Action('open.workspaceSettings', nls.localize('openWorkspaceSettings', "Open Workspace Settings"), null, true, () => {
 						let editorCount = this.editorService.getVisibleEditors().length;
 
-						return this.editorService.inputToType({ resource: this.contextService.toResource('.vscode/settings.json') }).then((typedInput) => {
-							return this.editorService.openEditor(typedInput, null, editorCount === 2 ? Position.RIGHT : editorCount === 1 ? Position.CENTER : void 0);
+						return this.editorService.createInput({ resource: this.contextService.toResource('.vscode/settings.json') }).then((typedInput) => {
+							return this.editorService.openEditor(typedInput, { pinned: true }, editorCount === 2 ? Position.RIGHT : editorCount === 1 ? Position.CENTER : void 0);
 						});
 					})
 				]
 			});
-
-			setTimeout(() => hide(), 10000 /* hide after 10 seconds */);
 		}
 
 		// Open settings
@@ -121,6 +154,7 @@ export class OpenGlobalSettingsAction extends BaseOpenSettingsAction {
 }
 
 export class OpenGlobalKeybindingsAction extends BaseTwoEditorsAction {
+
 	public static ID = 'workbench.action.openGlobalKeybindings';
 	public static LABEL = nls.localize('openGlobalKeybindings', "Open Keyboard Shortcuts");
 
@@ -128,6 +162,7 @@ export class OpenGlobalKeybindingsAction extends BaseTwoEditorsAction {
 		id: string,
 		label: string,
 		@IWorkbenchEditorService editorService: IWorkbenchEditorService,
+		@IEditorGroupService editorGroupService: IEditorGroupService,
 		@IFileService fileService: IFileService,
 		@IConfigurationService configurationService: IConfigurationService,
 		@IMessageService messageService: IMessageService,
@@ -135,10 +170,10 @@ export class OpenGlobalKeybindingsAction extends BaseTwoEditorsAction {
 		@IKeybindingService keybindingService: IKeybindingService,
 		@IInstantiationService instantiationService: IInstantiationService
 	) {
-		super(id, label, editorService, fileService, configurationService, messageService, contextService, keybindingService, instantiationService);
+		super(id, label, editorService, editorGroupService, fileService, configurationService, messageService, contextService, keybindingService, instantiationService);
 	}
 
-	public run(event?: any): TPromise<IEditor> {
+	public run(event?: any): TPromise<void> {
 		let emptyContents = '// ' + nls.localize('emptyKeybindingsHeader', "Place your key bindings in this file to overwrite the defaults") + '\n[\n]';
 
 		return this.openTwoEditors(DefaultKeybindingsInput.getInstance(this.instantiationService, this.keybindingService), URI.file(this.contextService.getConfiguration().env.appKeybindingsPath), emptyContents);
@@ -146,10 +181,11 @@ export class OpenGlobalKeybindingsAction extends BaseTwoEditorsAction {
 }
 
 export class OpenWorkspaceSettingsAction extends BaseOpenSettingsAction {
+
 	public static ID = 'workbench.action.openWorkspaceSettings';
 	public static LABEL = nls.localize('openWorkspaceSettings', "Open Workspace Settings");
 
-	public run(event?: any): TPromise<IEditor> {
+	public run(event?: any): TPromise<void> {
 		if (!this.contextService.getWorkspace()) {
 			this.messageService.show(Severity.Info, nls.localize('openFolderFirst', "Open a folder first to create workspace settings"));
 
@@ -169,11 +205,13 @@ export class OpenWorkspaceSettingsAction extends BaseOpenSettingsAction {
 class DefaultSettingsInput extends StringEditorInput {
 	private static INSTANCE: DefaultSettingsInput;
 
-	public static getInstance(instantiationService: IInstantiationService): DefaultSettingsInput {
+	public static getInstance(instantiationService: IInstantiationService, configurationService: IConfigurationService): DefaultSettingsInput {
 		if (!DefaultSettingsInput.INSTANCE) {
-			let defaults = getDefaultValuesContent();
+			let editorConfig = configurationService.getConfiguration<any>();
+			let defaults = getDefaultValuesContent(editorConfig.editor.insertSpaces ? strings.repeat(' ', editorConfig.editor.tabSize) : '\t');
 
 			let defaultsHeader = '// ' + nls.localize('defaultSettingsHeader', "Overwrite settings by placing them into your settings file.");
+			defaultsHeader += '\n// ' + nls.localize('defaultSettingsHeader2', "See http://go.microsoft.com/fwlink/?LinkId=808995 for the most commonly used settings.");
 			DefaultSettingsInput.INSTANCE = instantiationService.createInstance(DefaultSettingsInput, nls.localize('defaultName', "Default Settings"), null, defaultsHeader + '\n' + defaults, 'application/json', false);
 		}
 
@@ -181,7 +219,7 @@ class DefaultSettingsInput extends StringEditorInput {
 	}
 
 	protected getResource(): URI {
-		return URI.create('vscode', 'defaultsettings', '/settings.json'); // URI is used to register JSON schema support
+		return URI.from({ scheme: network.Schemas.vscode, authority: 'defaultsettings', path: '/settings.json' }); // URI is used to register JSON schema support
 	}
 }
 
@@ -200,16 +238,16 @@ class DefaultKeybindingsInput extends StringEditorInput {
 	}
 
 	protected getResource(): URI {
-		return URI.create('vscode', 'defaultsettings', '/keybindings.json'); // URI is used to register JSON schema support
+		return URI.from({ scheme: network.Schemas.vscode, authority: 'defaultsettings', path: '/keybindings.json' }); // URI is used to register JSON schema support
 	}
 }
 
 // Contribute Global Actions
 const category = nls.localize('preferences', "Preferences");
-let actionRegistry = <IWorkbenchActionRegistry>Registry.as(Extensions.WorkbenchActions);
-actionRegistry.registerWorkbenchAction(new SyncActionDescriptor(OpenGlobalSettingsAction, OpenGlobalSettingsAction.ID, OpenGlobalSettingsAction.LABEL, {
+const registry = Registry.as<IWorkbenchActionRegistry>(Extensions.WorkbenchActions);
+registry.registerWorkbenchAction(new SyncActionDescriptor(OpenGlobalSettingsAction, OpenGlobalSettingsAction.ID, OpenGlobalSettingsAction.LABEL, {
 	primary: null,
 	mac: { primary: KeyMod.CtrlCmd | KeyCode.US_COMMA }
-}), category);
-actionRegistry.registerWorkbenchAction(new SyncActionDescriptor(OpenGlobalKeybindingsAction, OpenGlobalKeybindingsAction.ID, OpenGlobalKeybindingsAction.LABEL), category);
-actionRegistry.registerWorkbenchAction(new SyncActionDescriptor(OpenWorkspaceSettingsAction, OpenWorkspaceSettingsAction.ID, OpenWorkspaceSettingsAction.LABEL), category);
+}), 'Preferences: Open User Settings', category);
+registry.registerWorkbenchAction(new SyncActionDescriptor(OpenGlobalKeybindingsAction, OpenGlobalKeybindingsAction.ID, OpenGlobalKeybindingsAction.LABEL), 'Preferences: Open Keyboard Shortcuts', category);
+registry.registerWorkbenchAction(new SyncActionDescriptor(OpenWorkspaceSettingsAction, OpenWorkspaceSettingsAction.ID, OpenWorkspaceSettingsAction.LABEL), 'Preferences: Open Workspace Settings', category);

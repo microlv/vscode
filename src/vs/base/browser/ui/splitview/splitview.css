@@ -28,7 +28,14 @@
 	padding-left: 20px;
 	background: rgba(128, 128, 128, 0.2);
 	overflow: hidden;
+	display: flex;
 }
+
+/* Bold font style does not go well with CJK fonts */
+.monaco-split-view:lang(zh-Hans) > .split-view-view > .header,
+.monaco-split-view:lang(zh-Hant) > .split-view-view > .header,
+.monaco-split-view:lang(ja) > .split-view-view > .header,
+.monaco-split-view:lang(ko) > .split-view-view > .header { font-weight: normal; }
 
 .monaco-split-view > .split-view-view > .header.collapsible {
 	cursor: pointer;

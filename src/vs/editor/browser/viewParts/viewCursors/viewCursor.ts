@@ -4,50 +4,60 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import {StyleMutator} from 'vs/base/browser/styleMutator';
-import {IConfigurationChangedEvent, IPosition} from 'vs/editor/common/editorCommon';
-import {IRenderingContext, IRestrictedRenderingContext, IViewContext} from 'vs/editor/browser/editorBrowser';
+import {FastDomNode, createFastDomNode} from 'vs/base/browser/styleMutator';
+import {IConfigurationChangedEvent, IPosition, TextEditorCursorStyle} from 'vs/editor/common/editorCommon';
+import {Configuration} from 'vs/editor/browser/config/configuration';
+import {ViewContext} from 'vs/editor/common/view/viewContext';
+import {IRenderingContext, IRestrictedRenderingContext} from 'vs/editor/common/view/renderingContext';
 
 export class ViewCursor {
-	private _context:IViewContext;
+	private _context:ViewContext;
 	private _position: IPosition;
-	private _domNode:HTMLElement;
+	private _domNode:FastDomNode;
 	private _positionTop:number;
 	private _positionLeft:number;
 	private _isInEditableRange:boolean;
 	private _isVisible:boolean;
 	private _isInViewport:boolean;
+	private _cursorStyle: TextEditorCursorStyle;
+	private _lastRenderedContent: string;
+	private _lineHeight: number;
 
-	constructor(context:IViewContext, isSecondary:boolean) {
+	constructor(context:ViewContext, isSecondary:boolean) {
 		this._context = context;
+		this._cursorStyle = this._context.configuration.editor.viewInfo.cursorStyle;
+		this._lineHeight = this._context.configuration.editor.lineHeight;
+		this._lastRenderedContent = '';
 
 		this._isInEditableRange = true;
 
 		this._domNode = this._createCursorDomNode(isSecondary);
+		Configuration.applyFontInfo(this._domNode, this._context.configuration.editor.fontInfo);
 		this._isVisible = true;
-		StyleMutator.setDisplay(this._domNode, 'none');
+		this._domNode.setDisplay('none');
 		this.updatePosition({
 			lineNumber: 1,
 			column: 1
 		});
 	}
 
-	private _createCursorDomNode(isSecondary: boolean): HTMLElement {
-		var domNode = document.createElement('div');
-		domNode.className = 'cursor';
+	private _createCursorDomNode(isSecondary: boolean): FastDomNode {
+		let domNode = createFastDomNode(document.createElement('div'));
 		if (isSecondary) {
-			domNode.className += ' secondary';
+			domNode.setClassName('cursor secondary');
+		} else {
+			domNode.setClassName('cursor');
 		}
-		StyleMutator.setHeight(domNode, this._context.configuration.editor.lineHeight);
-		StyleMutator.setTop(domNode, 0);
-		StyleMutator.setLeft(domNode, 0);
-		domNode.setAttribute('role', 'presentation');
-		domNode.setAttribute('aria-hidden', 'true');
+		domNode.setHeight(this._lineHeight);
+		domNode.setTop(0);
+		domNode.setLeft(0);
+		domNode.domNode.setAttribute('role', 'presentation');
+		domNode.domNode.setAttribute('aria-hidden', 'true');
 		return domNode;
 	}
 
 	public getDomNode(): HTMLElement {
-		return this._domNode;
+		return this._domNode.domNode;
 	}
 
 	public getIsInEditableRange(): boolean {
@@ -64,14 +74,14 @@ export class ViewCursor {
 
 	public show(): void {
 		if (!this._isVisible) {
-			StyleMutator.setVisibility(this._domNode, 'inherit');
+			this._domNode.setVisibility('inherit');
 			this._isVisible = true;
 		}
 	}
 
 	public hide(): void {
 		if (this._isVisible) {
-			StyleMutator.setVisibility(this._domNode, 'hidden');
+			this._domNode.setVisibility('hidden');
 			this._isVisible = false;
 		}
 	}
@@ -93,7 +103,13 @@ export class ViewCursor {
 
 	public onConfigurationChanged(e:IConfigurationChangedEvent): boolean {
 		if (e.lineHeight) {
-			StyleMutator.setHeight(this._domNode, this._context.configuration.editor.lineHeight);
+			this._lineHeight = this._context.configuration.editor.lineHeight;
+		}
+		if (e.viewInfo.cursorStyle) {
+			this._cursorStyle = this._context.configuration.editor.viewInfo.cursorStyle;
+		}
+		if (e.fontInfo) {
+			Configuration.applyFontInfo(this._domNode, this._context.configuration.editor.fontInfo);
 		}
 		return true;
 	}
@@ -109,20 +125,36 @@ export class ViewCursor {
 		}
 	}
 
+	private _getRenderedContent(): string {
+		if (this._cursorStyle === TextEditorCursorStyle.Block) {
+			let lineContent = this._context.model.getLineContent(this._position.lineNumber);
+			return lineContent.charAt(this._position.column - 1);
+		}
+		return '';
+	}
+
 	public render(ctx:IRestrictedRenderingContext): void {
 		if (this._isInViewport) {
-			StyleMutator.setDisplay(this._domNode, 'block');
-			StyleMutator.setLeft(this._domNode, this._positionLeft);
-			StyleMutator.setTop(this._domNode, this._positionTop + ctx.viewportTop - ctx.bigNumbersDelta);
+			let renderContent = this._getRenderedContent();
+			if (this._lastRenderedContent !== renderContent) {
+				this._lastRenderedContent = renderContent;
+				this._domNode.domNode.textContent = this._lastRenderedContent;
+			}
+
+			this._domNode.setDisplay('block');
+			this._domNode.setLeft(this._positionLeft);
+			this._domNode.setTop(this._positionTop + ctx.viewportTop - ctx.bigNumbersDelta);
+			this._domNode.setLineHeight(this._lineHeight);
+			this._domNode.setHeight(this._lineHeight);
 		} else {
-			StyleMutator.setDisplay(this._domNode, 'none');
+			this._domNode.setDisplay('none');
 		}
 	}
 
 	private updatePosition(newPosition:IPosition): void {
 		this._position = newPosition;
-		this._domNode.setAttribute('lineNumber', this._position.lineNumber.toString());
-		this._domNode.setAttribute('column', this._position.column.toString());
+		this._domNode.domNode.setAttribute('lineNumber', this._position.lineNumber.toString());
+		this._domNode.domNode.setAttribute('column', this._position.column.toString());
 		this._isInViewport = false;
 	}
 }

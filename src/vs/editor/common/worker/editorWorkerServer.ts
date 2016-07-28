@@ -7,46 +7,35 @@
 
 // include these in the editor bundle because they are widely used by many languages
 import 'vs/editor/common/languages.common';
-import 'vs/editor/common/worker/validationHelper';
-
 import Severity from 'vs/base/common/severity';
 import {TPromise} from 'vs/base/common/winjs.base';
 import {WorkerServer} from 'vs/base/common/worker/workerServer';
 import {EventService} from 'vs/platform/event/common/eventService';
-import {createInstantiationService} from 'vs/platform/instantiation/common/instantiationService';
-import {SecondaryMarkerService} from 'vs/platform/markers/common/markerService';
-import {AbstractPluginService, ActivatedPlugin} from 'vs/platform/plugins/common/abstractPluginService';
-import {IPluginDescription} from 'vs/platform/plugins/common/plugins';
-import {BaseRequestService} from 'vs/platform/request/common/baseRequestService';
-import {WorkerTelemetryService} from 'vs/platform/telemetry/common/workerTelemetryService';
-import {WorkerThreadService} from 'vs/platform/thread/common/workerThreadService';
-import {BaseWorkspaceContextService} from 'vs/platform/workspace/common/baseWorkspaceContextService';
-import {IWorkspace} from 'vs/platform/workspace/common/workspace';
-import {ModeServiceImpl, ModeServiceWorkerHelper} from 'vs/editor/common/services/modeServiceImpl';
-import {ModelServiceWorkerHelper} from 'vs/editor/common/services/modelServiceImpl';
+import {IEventService} from 'vs/platform/event/common/event';
+import {AbstractExtensionService, ActivatedExtension} from 'vs/platform/extensions/common/abstractExtensionService';
+import {IExtensionDescription, IExtensionService} from 'vs/platform/extensions/common/extensions';
+import {ServiceCollection} from 'vs/platform/instantiation/common/serviceCollection';
+import {InstantiationService} from 'vs/platform/instantiation/common/instantiationService';
+import {ModeServiceImpl} from 'vs/editor/common/services/modeServiceImpl';
+import {IModeService, ILanguageExtensionPoint} from 'vs/editor/common/services/modeService';
 import {ResourceService} from 'vs/editor/common/services/resourceServiceImpl';
+import {IResourceService} from 'vs/editor/common/services/resourceService';
+import {CompatWorkerServiceWorker} from 'vs/editor/common/services/compatWorkerServiceWorker';
+import {ICompatWorkerService} from 'vs/editor/common/services/compatWorkerService';
+import {ILegacyLanguageDefinition} from 'vs/editor/common/modes/modesRegistry';
 
 export interface IInitData {
-	contextService: {
-		workspace:any;
-		configuration:any;
-		options:any;
+	modesRegistryData?: {
+		compatModes: ILegacyLanguageDefinition[];
+		languages: ILanguageExtensionPoint[];
 	};
-}
-
-interface IWorkspaceWithTelemetry extends IWorkspace {
-	telemetry?:string;
-}
-
-interface IWorkspaceWithSearch extends IWorkspace {
-	search?:string;
 }
 
 export interface ICallback {
 	(something:any):void;
 }
 
-class WorkerPluginService extends AbstractPluginService<ActivatedPlugin> {
+class WorkerExtensionService extends AbstractExtensionService<ActivatedExtension> {
 
 	constructor() {
 		super(true);
@@ -68,69 +57,52 @@ class WorkerPluginService extends AbstractPluginService<ActivatedPlugin> {
 		}
 	}
 
-	public deactivate(pluginId:string): void {
-		// nothing to do
-	}
-
-	protected _createFailedPlugin(): ActivatedPlugin {
+	protected _createFailedExtension(): ActivatedExtension {
 		throw new Error('unexpected');
 	}
 
-	protected _actualActivatePlugin(pluginDescription: IPluginDescription): TPromise<ActivatedPlugin> {
+	protected _actualActivateExtension(extensionDescription: IExtensionDescription): TPromise<ActivatedExtension> {
 		throw new Error('unexpected');
 	}
-
 }
 
 export class EditorWorkerServer {
 
-	private threadService:WorkerThreadService;
+	private compatWorkerService:CompatWorkerServiceWorker;
 
 	constructor() {
 	}
 
 	public initialize(mainThread:WorkerServer, complete:ICallback, error:ICallback, progress:ICallback, initData:IInitData):void {
 
-		var pluginService = new WorkerPluginService();
+		const services = new ServiceCollection();
+		const instantiationService = new InstantiationService(services);
 
-		var contextService = new BaseWorkspaceContextService(initData.contextService.workspace, initData.contextService.configuration, initData.contextService.options);
+		const extensionService = new WorkerExtensionService();
+		services.set(IExtensionService, extensionService);
 
-		this.threadService = new WorkerThreadService(mainThread.getRemoteCom());
-		this.threadService.setInstantiationService(createInstantiationService({ threadService: this.threadService }));
+		const resourceService = new ResourceService();
+		services.set(IResourceService, resourceService);
 
-		var telemetryServiceInstance = new WorkerTelemetryService(this.threadService);
+		services.set(IEventService, new EventService());
 
-		var resourceService = new ResourceService();
-		var markerService = new SecondaryMarkerService(this.threadService);
+		const modeService = new ModeServiceImpl(instantiationService, extensionService);
+		services.set(IModeService, modeService);
 
-		var modeService = new ModeServiceImpl(this.threadService, pluginService);
-
-		var requestService = new BaseRequestService(contextService, telemetryServiceInstance);
-
-		var _services : any = {
-			threadService: this.threadService,
-			pluginService: pluginService,
-			modeService: modeService,
-			contextService: contextService,
-			eventService: new EventService(),
-			resourceService: resourceService,
-			markerService: markerService,
-			telemetryService: telemetryServiceInstance,
-			requestService: requestService
-		};
-
-		var instantiationService = createInstantiationService(_services);
-		this.threadService.setInstantiationService(instantiationService);
-
-		// Instantiate thread actors
-		this.threadService.getRemotable(ModeServiceWorkerHelper);
-		this.threadService.getRemotable(ModelServiceWorkerHelper);
+		this.compatWorkerService = new CompatWorkerServiceWorker(resourceService, modeService, initData.modesRegistryData);
+		services.set(ICompatWorkerService, this.compatWorkerService);
 
 		complete(undefined);
 	}
 
 	public request(mainThread:WorkerServer, complete:ICallback, error:ICallback, progress:ICallback, data:any):void {
-		this.threadService.dispatch(data).then(complete, error, progress);
+		try {
+			TPromise.as(
+				this.compatWorkerService.handleMainRequest(data.target, data.methodName, data.args)
+			).then(complete, error);
+		} catch (err) {
+			error(err);
+		}
 	}
 }
 

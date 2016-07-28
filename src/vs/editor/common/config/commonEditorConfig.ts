@@ -8,13 +8,84 @@ import * as nls from 'vs/nls';
 import Event, {Emitter} from 'vs/base/common/event';
 import {Disposable} from 'vs/base/common/lifecycle';
 import * as objects from 'vs/base/common/objects';
-import * as strings from 'vs/base/common/strings';
-import {Extensions, IConfigurationRegistry} from 'vs/platform/configuration/common/configurationRegistry';
+import * as platform from 'vs/base/common/platform';
+import {Extensions, IConfigurationRegistry, IConfigurationNode} from 'vs/platform/configuration/common/configurationRegistry';
 import {Registry} from 'vs/platform/platform';
-import {DefaultConfig} from 'vs/editor/common/config/defaultConfig';
-import {HandlerDispatcher} from 'vs/editor/common/controller/handlerDispatcher';
+import {DefaultConfig, DEFAULT_INDENTATION, DEFAULT_TRIM_AUTO_WHITESPACE, GOLDEN_LINE_HEIGHT_RATIO} from 'vs/editor/common/config/defaultConfig';
 import * as editorCommon from 'vs/editor/common/editorCommon';
 import {EditorLayoutProvider} from 'vs/editor/common/viewLayout/editorLayoutProvider';
+import {ScrollbarVisibility} from 'vs/base/common/scrollable';
+
+// TODO@Alex: investigate if it is better to stick to 31 bits (see smi = SMall Integer)
+// See https://thibaultlaurens.github.io/javascript/2013/04/29/how-the-v8-engine-works/#tagged-values
+/**
+ * MAX_INT that fits in 32 bits
+ */
+const MAX_SAFE_INT = 0x7fffffff;
+/**
+ * MIN_INT that fits in 32 bits
+ */
+const MIN_SAFE_INT = -0x80000000;
+
+export interface IEditorZoom {
+	onDidChangeZoomLevel:Event<number>;
+	getZoomLevel(): number;
+	setZoomLevel(zoomLevel:number): void;
+}
+
+export const EditorZoom: IEditorZoom = new class {
+
+	private _zoomLevel: number = 0;
+
+	private _onDidChangeZoomLevel: Emitter<number> = new Emitter<number>();
+	public onDidChangeZoomLevel:Event<number> = this._onDidChangeZoomLevel.event;
+
+	public getZoomLevel(): number {
+		return this._zoomLevel;
+	}
+
+	public setZoomLevel(zoomLevel:number): void {
+		zoomLevel = Math.min(Math.max(-9, zoomLevel), 9);
+		if (this._zoomLevel === zoomLevel) {
+			return;
+		}
+
+		this._zoomLevel = zoomLevel;
+		this._onDidChangeZoomLevel.fire(this._zoomLevel);
+	}
+};
+
+/**
+ * Control what pressing Tab does.
+ * If it is false, pressing Tab or Shift-Tab will be handled by the editor.
+ * If it is true, pressing Tab or Shift-Tab will move the browser focus.
+ * Defaults to false.
+ */
+export interface ITabFocus {
+	onDidChangeTabFocus:Event<boolean>;
+	getTabFocusMode(): boolean;
+	setTabFocusMode(tabFocusMode:boolean): void;
+}
+
+export const TabFocus: ITabFocus = new class {
+	private _tabFocus: boolean = false;
+
+	private _onDidChangeTabFocus: Emitter<boolean> = new Emitter<boolean>();
+	public onDidChangeTabFocus:Event<boolean> = this._onDidChangeTabFocus.event;
+
+	public getTabFocusMode(): boolean {
+		return this._tabFocus;
+	}
+
+	public setTabFocusMode(tabFocusMode:boolean): void {
+		if (this._tabFocus === tabFocusMode) {
+			return;
+		}
+
+		this._tabFocus = tabFocusMode;
+		this._onDidChangeTabFocus.fire(this._tabFocus);
+	}
+};
 
 /**
  * Experimental screen reader support toggle
@@ -62,139 +133,22 @@ export class ConfigurationWithDefaults {
 	}
 }
 
-function cloneInternalEditorOptions(opts: editorCommon.IInternalEditorOptions): editorCommon.IInternalEditorOptions {
-	return {
-		experimentalScreenReader: opts.experimentalScreenReader,
-		rulers: opts.rulers.slice(0),
-		wordSeparators: opts.wordSeparators,
-		ariaLabel: opts.ariaLabel,
-		lineNumbers: opts.lineNumbers,
-		selectOnLineNumbers: opts.selectOnLineNumbers,
-		glyphMargin: opts.glyphMargin,
-		revealHorizontalRightPadding: opts.revealHorizontalRightPadding,
-		roundedSelection: opts.roundedSelection,
-		theme: opts.theme,
-		readOnly: opts.readOnly,
-		scrollbar: {
-			arrowSize: opts.scrollbar.arrowSize,
-			vertical: opts.scrollbar.vertical,
-			horizontal: opts.scrollbar.horizontal,
-			useShadows: opts.scrollbar.useShadows,
-			verticalHasArrows: opts.scrollbar.verticalHasArrows,
-			horizontalHasArrows: opts.scrollbar.horizontalHasArrows,
-			handleMouseWheel: opts.scrollbar.handleMouseWheel,
-			horizontalScrollbarSize: opts.scrollbar.horizontalScrollbarSize,
-			horizontalSliderSize: opts.scrollbar.horizontalSliderSize,
-			verticalScrollbarSize: opts.scrollbar.verticalScrollbarSize,
-			verticalSliderSize: opts.scrollbar.verticalSliderSize,
-			mouseWheelScrollSensitivity: opts.scrollbar.mouseWheelScrollSensitivity,
-		},
-		overviewRulerLanes: opts.overviewRulerLanes,
-		cursorBlinking: opts.cursorBlinking,
-		cursorStyle: opts.cursorStyle,
-		fontLigatures: opts.fontLigatures,
-		hideCursorInOverviewRuler: opts.hideCursorInOverviewRuler,
-		scrollBeyondLastLine: opts.scrollBeyondLastLine,
-		wrappingIndent: opts.wrappingIndent,
-		wordWrapBreakBeforeCharacters: opts.wordWrapBreakBeforeCharacters,
-		wordWrapBreakAfterCharacters: opts.wordWrapBreakAfterCharacters,
-		wordWrapBreakObtrusiveCharacters: opts.wordWrapBreakObtrusiveCharacters,
-		tabFocusMode: opts.tabFocusMode,
-		stopLineTokenizationAfter: opts.stopLineTokenizationAfter,
-		stopRenderingLineAfter: opts.stopRenderingLineAfter,
-		longLineBoundary: opts.longLineBoundary,
-		forcedTokenizationBoundary: opts.forcedTokenizationBoundary,
-		hover: opts.hover,
-		contextmenu: opts.contextmenu,
-		quickSuggestions: opts.quickSuggestions,
-		quickSuggestionsDelay: opts.quickSuggestionsDelay,
-		iconsInSuggestions: opts.iconsInSuggestions,
-		autoClosingBrackets: opts.autoClosingBrackets,
-		formatOnType: opts.formatOnType,
-		suggestOnTriggerCharacters: opts.suggestOnTriggerCharacters,
-		selectionHighlight: opts.selectionHighlight,
-		outlineMarkers: opts.outlineMarkers,
-		referenceInfos: opts.referenceInfos,
-		folding: opts.folding,
-		renderWhitespace: opts.renderWhitespace,
-		layoutInfo: {
-			width: opts.layoutInfo.width,
-			height: opts.layoutInfo.height,
-			glyphMarginLeft: opts.layoutInfo.glyphMarginLeft,
-			glyphMarginWidth: opts.layoutInfo.glyphMarginWidth,
-			glyphMarginHeight: opts.layoutInfo.glyphMarginHeight,
-			lineNumbersLeft: opts.layoutInfo.lineNumbersLeft,
-			lineNumbersWidth: opts.layoutInfo.lineNumbersWidth,
-			lineNumbersHeight: opts.layoutInfo.lineNumbersHeight,
-			decorationsLeft: opts.layoutInfo.decorationsLeft,
-			decorationsWidth: opts.layoutInfo.decorationsWidth,
-			decorationsHeight: opts.layoutInfo.decorationsHeight,
-			contentLeft: opts.layoutInfo.contentLeft,
-			contentWidth: opts.layoutInfo.contentWidth,
-			contentHeight: opts.layoutInfo.contentHeight,
-			verticalScrollbarWidth: opts.layoutInfo.verticalScrollbarWidth,
-			horizontalScrollbarHeight: opts.layoutInfo.horizontalScrollbarHeight,
-			overviewRuler:{
-				width: opts.layoutInfo.overviewRuler.width,
-				height: opts.layoutInfo.overviewRuler.height,
-				top: opts.layoutInfo.overviewRuler.top,
-				right: opts.layoutInfo.overviewRuler.right,
-			}
-		},
-		stylingInfo: {
-			editorClassName: opts.stylingInfo.editorClassName,
-			fontFamily: opts.stylingInfo.fontFamily,
-			fontSize: opts.stylingInfo.fontSize,
-			lineHeight: opts.stylingInfo.lineHeight,
-		},
-		wrappingInfo: {
-			isViewportWrapping: opts.wrappingInfo.isViewportWrapping,
-			wrappingColumn: opts.wrappingInfo.wrappingColumn,
-		},
-		indentInfo: {
-			tabSize: opts.indentInfo.tabSize,
-			insertSpaces: opts.indentInfo.insertSpaces,
-		},
-		observedOuterWidth: opts.observedOuterWidth,
-		observedOuterHeight: opts.observedOuterHeight,
-		lineHeight: opts.lineHeight,
-		pageSize: opts.pageSize,
-		typicalHalfwidthCharacterWidth: opts.typicalHalfwidthCharacterWidth,
-		typicalFullwidthCharacterWidth: opts.typicalFullwidthCharacterWidth,
-		fontSize: opts.fontSize,
-	};
-}
-
 class InternalEditorOptionsHelper {
 
 	constructor() {
 	}
 
 	public static createInternalEditorOptions(
-		outerWidth:number,
-		outerHeight:number,
+		outerWidth:number, outerHeight:number,
 		opts:editorCommon.IEditorOptions,
+		fontInfo: editorCommon.FontInfo,
 		editorClassName:string,
-		requestedFontFamily:string,
-		requestedFontSize:number,
-		requestedLineHeight:number,
-		adjustedLineHeight:number,
-		themeOpts: ICSSConfig,
 		isDominatedByLongLines:boolean,
-		lineCount: number,
-		indentationOptions: editorCommon.IInternalIndentationOptions
-	): editorCommon.IInternalEditorOptions {
+		maxLineNumber: number,
+		canUseTranslate3d: boolean
+	): editorCommon.InternalEditorOptions {
 
 		let wrappingColumn = toInteger(opts.wrappingColumn, -1);
-
-		let stopLineTokenizationAfter:number;
-		if (typeof opts.stopLineTokenizationAfter !== 'undefined') {
-			stopLineTokenizationAfter = toInteger(opts.stopLineTokenizationAfter, -1);
-		} else if (wrappingColumn >= 0) {
-			stopLineTokenizationAfter = -1;
-		} else {
-			stopLineTokenizationAfter = 10000;
-		}
 
 		let stopRenderingLineAfter:number;
 		if (typeof opts.stopRenderingLineAfter !== 'undefined') {
@@ -219,127 +173,135 @@ class InternalEditorOptionsHelper {
 			outerWidth: outerWidth,
 			outerHeight: outerHeight,
 			showGlyphMargin: glyphMargin,
-			lineHeight: themeOpts.lineHeight,
+			lineHeight: fontInfo.lineHeight,
 			showLineNumbers: !!lineNumbers,
 			lineNumbersMinChars: lineNumbersMinChars,
 			lineDecorationsWidth: lineDecorationsWidth,
-			maxDigitWidth: themeOpts.maxDigitWidth,
-			lineCount: lineCount,
+			maxDigitWidth: fontInfo.maxDigitWidth,
+			maxLineNumber: maxLineNumber,
 			verticalScrollbarWidth: scrollbar.verticalScrollbarSize,
 			horizontalScrollbarHeight: scrollbar.horizontalScrollbarSize,
 			scrollbarArrowSize: scrollbar.arrowSize,
 			verticalScrollbarHasArrows: scrollbar.verticalHasArrows
 		});
 
-		let pageSize = Math.floor(layoutInfo.height / themeOpts.lineHeight) - 2;
-
 		if (isDominatedByLongLines && wrappingColumn > 0) {
 			// Force viewport width wrapping if model is dominated by long lines
 			wrappingColumn = 0;
 		}
 
-		let wrappingInfo: editorCommon.IEditorWrappingInfo;
-
+		let bareWrappingInfo: { isViewportWrapping: boolean; wrappingColumn: number; };
 		if (wrappingColumn === 0) {
 			// If viewport width wrapping is enabled
-			wrappingInfo = {
+			bareWrappingInfo = {
 				isViewportWrapping: true,
-				wrappingColumn: Math.max(1, Math.floor((layoutInfo.contentWidth - layoutInfo.verticalScrollbarWidth) / themeOpts.typicalHalfwidthCharacterWidth))
+				wrappingColumn: Math.max(1, Math.floor((layoutInfo.contentWidth - layoutInfo.verticalScrollbarWidth) / fontInfo.typicalHalfwidthCharacterWidth))
 			};
 		} else if (wrappingColumn > 0) {
 			// Wrapping is enabled
-			wrappingInfo = {
+			bareWrappingInfo = {
 				isViewportWrapping: false,
 				wrappingColumn: wrappingColumn
 			};
 		} else {
-			wrappingInfo = {
+			bareWrappingInfo = {
 				isViewportWrapping: false,
 				wrappingColumn: -1
 			};
 		}
+		let wrappingInfo = new editorCommon.EditorWrappingInfo({
+			isViewportWrapping: bareWrappingInfo.isViewportWrapping,
+			wrappingColumn: bareWrappingInfo.wrappingColumn,
+			wrappingIndent: wrappingIndentFromString(opts.wrappingIndent),
+			wordWrapBreakBeforeCharacters: String(opts.wordWrapBreakBeforeCharacters),
+			wordWrapBreakAfterCharacters: String(opts.wordWrapBreakAfterCharacters),
+			wordWrapBreakObtrusiveCharacters: String(opts.wordWrapBreakObtrusiveCharacters),
+		});
 
 		let readOnly = toBoolean(opts.readOnly);
 
-		let tabFocusMode = toBoolean(opts.tabFocusMode);
+		let tabFocusMode = TabFocus.getTabFocusMode();
 		if (readOnly) {
 			tabFocusMode = true;
 		}
 
-		return {
-			// ---- Options that are transparent - get no massaging
+		let viewInfo = new editorCommon.InternalEditorViewOptions({
+			theme: opts.theme,
+			canUseTranslate3d: canUseTranslate3d,
+			experimentalScreenReader: toBoolean(opts.experimentalScreenReader),
+			rulers: toSortedIntegerArray(opts.rulers),
+			ariaLabel: String(opts.ariaLabel),
 			lineNumbers: lineNumbers,
 			selectOnLineNumbers: toBoolean(opts.selectOnLineNumbers),
 			glyphMargin: glyphMargin,
 			revealHorizontalRightPadding: toInteger(opts.revealHorizontalRightPadding, 0),
 			roundedSelection: toBoolean(opts.roundedSelection),
-			theme: opts.theme,
-			readOnly: readOnly,
-			scrollbar: scrollbar,
 			overviewRulerLanes: toInteger(opts.overviewRulerLanes, 0, 3),
-			cursorBlinking: opts.cursorBlinking,
-			experimentalScreenReader: toBoolean(opts.experimentalScreenReader),
-			rulers: toSortedIntegerArray(opts.rulers),
-			wordSeparators: String(opts.wordSeparators),
-			ariaLabel: String(opts.ariaLabel),
-			cursorStyle: opts.cursorStyle,
-			fontLigatures: toBoolean(opts.fontLigatures),
+			cursorBlinking: cursorBlinkingStyleFromString(opts.cursorBlinking),
+			mouseWheelZoom: toBoolean(opts.mouseWheelZoom),
+			cursorStyle: cursorStyleFromString(opts.cursorStyle),
 			hideCursorInOverviewRuler: toBoolean(opts.hideCursorInOverviewRuler),
 			scrollBeyondLastLine: toBoolean(opts.scrollBeyondLastLine),
-			wrappingIndent: opts.wrappingIndent,
-			wordWrapBreakBeforeCharacters: opts.wordWrapBreakBeforeCharacters,
-			wordWrapBreakAfterCharacters: opts.wordWrapBreakAfterCharacters,
-			wordWrapBreakObtrusiveCharacters: opts.wordWrapBreakObtrusiveCharacters,
-			tabFocusMode: tabFocusMode,
-			stopLineTokenizationAfter: stopLineTokenizationAfter,
+			editorClassName: editorClassName,
 			stopRenderingLineAfter: stopRenderingLineAfter,
-			longLineBoundary: toInteger(opts.longLineBoundary),
-			forcedTokenizationBoundary: toInteger(opts.forcedTokenizationBoundary),
+			renderWhitespace: toBoolean(opts.renderWhitespace),
+			renderControlCharacters: toBoolean(opts.renderControlCharacters),
+			renderIndentGuides: toBoolean(opts.renderIndentGuides),
+			scrollbar: scrollbar,
+		});
 
+		let contribInfo = new editorCommon.EditorContribOptions({
+			selectionClipboard: toBoolean(opts.selectionClipboard),
 			hover: toBoolean(opts.hover),
 			contextmenu: toBoolean(opts.contextmenu),
 			quickSuggestions: toBoolean(opts.quickSuggestions),
 			quickSuggestionsDelay: toInteger(opts.quickSuggestionsDelay),
+			parameterHints: toBoolean(opts.parameterHints),
 			iconsInSuggestions: toBoolean(opts.iconsInSuggestions),
-			autoClosingBrackets: toBoolean(opts.autoClosingBrackets),
 			formatOnType: toBoolean(opts.formatOnType),
 			suggestOnTriggerCharacters: toBoolean(opts.suggestOnTriggerCharacters),
+			acceptSuggestionOnEnter: toBoolean(opts.acceptSuggestionOnEnter),
+			snippetSuggestions: opts.snippetSuggestions,
+			tabCompletion: opts.tabCompletion,
+			wordBasedSuggestions: opts.wordBasedSuggestions,
 			selectionHighlight: toBoolean(opts.selectionHighlight),
-			outlineMarkers: toBoolean(opts.outlineMarkers),
 			referenceInfos: toBoolean(opts.referenceInfos),
 			folding: toBoolean(opts.folding),
-			renderWhitespace: toBoolean(opts.renderWhitespace),
+		});
 
+		return new editorCommon.InternalEditorOptions({
+			lineHeight: fontInfo.lineHeight, // todo -> duplicated in styling
+			readOnly: readOnly,
+			wordSeparators: String(opts.wordSeparators),
+			autoClosingBrackets: toBoolean(opts.autoClosingBrackets),
+			useTabStops: toBoolean(opts.useTabStops),
+			tabFocusMode: tabFocusMode,
 			layoutInfo: layoutInfo,
-			stylingInfo: {
-				editorClassName: editorClassName,
-				fontFamily: requestedFontFamily,
-				fontSize: requestedFontSize,
-				lineHeight: adjustedLineHeight
-			},
+			fontInfo: fontInfo,
+			viewInfo: viewInfo,
 			wrappingInfo: wrappingInfo,
-			indentInfo: indentationOptions,
-
-			observedOuterWidth: outerWidth,
-			observedOuterHeight: outerHeight,
-
-			lineHeight: themeOpts.lineHeight,
-
-			pageSize: pageSize,
-
-			typicalHalfwidthCharacterWidth: themeOpts.typicalHalfwidthCharacterWidth,
-			typicalFullwidthCharacterWidth: themeOpts.typicalFullwidthCharacterWidth,
-
-			fontSize: themeOpts.fontSize,
-		};
+			contribInfo: contribInfo,
+		});
 	}
 
-	private static _sanitizeScrollbarOpts(raw:editorCommon.IEditorScrollbarOptions, mouseWheelScrollSensitivity:number): editorCommon.IInternalEditorScrollbarOptions {
+	private static _sanitizeScrollbarOpts(raw:editorCommon.IEditorScrollbarOptions, mouseWheelScrollSensitivity:number): editorCommon.InternalEditorScrollbarOptions {
+
+		var visibilityFromString = (visibility: string) => {
+			switch (visibility) {
+				case 'hidden':
+					return ScrollbarVisibility.Hidden;
+				case 'visible':
+					return ScrollbarVisibility.Visible;
+				default:
+					return ScrollbarVisibility.Auto;
+			}
+		};
+
 		let horizontalScrollbarSize = toIntegerWithDefault(raw.horizontalScrollbarSize, 10);
 		let verticalScrollbarSize = toIntegerWithDefault(raw.verticalScrollbarSize, 14);
-		return {
-			vertical: toStringSet(raw.vertical, ['auto', 'visible', 'hidden'], 'auto'),
-			horizontal: toStringSet(raw.horizontal, ['auto', 'visible', 'hidden'], 'auto'),
+		return new editorCommon.InternalEditorScrollbarOptions({
+			vertical: visibilityFromString(raw.vertical),
+			horizontal: visibilityFromString(raw.horizontal),
 
 			arrowSize: toIntegerWithDefault(raw.arrowSize, 11),
 			useShadows: toBooleanWithDefault(raw.useShadows, true),
@@ -355,128 +317,8 @@ class InternalEditorOptionsHelper {
 
 			handleMouseWheel: toBooleanWithDefault(raw.handleMouseWheel, true),
 			mouseWheelScrollSensitivity: mouseWheelScrollSensitivity
-		};
+		});
 	}
-
-	public static createConfigurationChangedEvent(prevOpts:editorCommon.IInternalEditorOptions, newOpts:editorCommon.IInternalEditorOptions): editorCommon.IConfigurationChangedEvent {
-		return {
-			experimentalScreenReader:		(prevOpts.experimentalScreenReader !== newOpts.experimentalScreenReader),
-			rulers:							(!this._numberArraysEqual(prevOpts.rulers, newOpts.rulers)),
-			wordSeparators:					(prevOpts.wordSeparators !== newOpts.wordSeparators),
-			ariaLabel:						(prevOpts.ariaLabel !== newOpts.ariaLabel),
-
-			lineNumbers:					(prevOpts.lineNumbers !== newOpts.lineNumbers),
-			selectOnLineNumbers:			(prevOpts.selectOnLineNumbers !== newOpts.selectOnLineNumbers),
-			glyphMargin:					(prevOpts.glyphMargin !== newOpts.glyphMargin),
-			revealHorizontalRightPadding:	(prevOpts.revealHorizontalRightPadding !== newOpts.revealHorizontalRightPadding),
-			roundedSelection:				(prevOpts.roundedSelection !== newOpts.roundedSelection),
-			theme:							(prevOpts.theme !== newOpts.theme),
-			readOnly:						(prevOpts.readOnly !== newOpts.readOnly),
-			scrollbar:						(!this._scrollbarOptsEqual(prevOpts.scrollbar, newOpts.scrollbar)),
-			overviewRulerLanes:				(prevOpts.overviewRulerLanes !== newOpts.overviewRulerLanes),
-			cursorBlinking:					(prevOpts.cursorBlinking !== newOpts.cursorBlinking),
-			cursorStyle:					(prevOpts.cursorStyle !== newOpts.cursorStyle),
-			fontLigatures:					(prevOpts.fontLigatures !== newOpts.fontLigatures),
-			hideCursorInOverviewRuler:		(prevOpts.hideCursorInOverviewRuler !== newOpts.hideCursorInOverviewRuler),
-			scrollBeyondLastLine:			(prevOpts.scrollBeyondLastLine !== newOpts.scrollBeyondLastLine),
-			wrappingIndent:					(prevOpts.wrappingIndent !== newOpts.wrappingIndent),
-			wordWrapBreakBeforeCharacters:	(prevOpts.wordWrapBreakBeforeCharacters !== newOpts.wordWrapBreakBeforeCharacters),
-			wordWrapBreakAfterCharacters:	(prevOpts.wordWrapBreakAfterCharacters !== newOpts.wordWrapBreakAfterCharacters),
-			wordWrapBreakObtrusiveCharacters:(prevOpts.wordWrapBreakObtrusiveCharacters !== newOpts.wordWrapBreakObtrusiveCharacters),
-			tabFocusMode:					(prevOpts.tabFocusMode !== newOpts.tabFocusMode),
-			stopLineTokenizationAfter:		(prevOpts.stopLineTokenizationAfter !== newOpts.stopLineTokenizationAfter),
-			stopRenderingLineAfter:			(prevOpts.stopRenderingLineAfter !== newOpts.stopRenderingLineAfter),
-			longLineBoundary:				(prevOpts.longLineBoundary !== newOpts.longLineBoundary),
-			forcedTokenizationBoundary:		(prevOpts.forcedTokenizationBoundary !== newOpts.forcedTokenizationBoundary),
-
-			hover:							(prevOpts.hover !== newOpts.hover),
-			contextmenu:					(prevOpts.contextmenu !== newOpts.contextmenu),
-			quickSuggestions:				(prevOpts.quickSuggestions !== newOpts.quickSuggestions),
-			quickSuggestionsDelay:			(prevOpts.quickSuggestionsDelay !== newOpts.quickSuggestionsDelay),
-			iconsInSuggestions:				(prevOpts.iconsInSuggestions !== newOpts.iconsInSuggestions),
-			autoClosingBrackets:			(prevOpts.autoClosingBrackets !== newOpts.autoClosingBrackets),
-			formatOnType:					(prevOpts.formatOnType !== newOpts.formatOnType),
-			suggestOnTriggerCharacters:		(prevOpts.suggestOnTriggerCharacters !== newOpts.suggestOnTriggerCharacters),
-			selectionHighlight:				(prevOpts.selectionHighlight !== newOpts.selectionHighlight),
-			outlineMarkers:					(prevOpts.outlineMarkers !== newOpts.outlineMarkers),
-			referenceInfos:					(prevOpts.referenceInfos !== newOpts.referenceInfos),
-			folding:						(prevOpts.folding !== newOpts.folding),
-			renderWhitespace:				(prevOpts.renderWhitespace !== newOpts.renderWhitespace),
-
-			layoutInfo: 					(!EditorLayoutProvider.layoutEqual(prevOpts.layoutInfo, newOpts.layoutInfo)),
-			stylingInfo: 					(!this._stylingInfoEqual(prevOpts.stylingInfo, newOpts.stylingInfo)),
-			wrappingInfo:					(!this._wrappingInfoEqual(prevOpts.wrappingInfo, newOpts.wrappingInfo)),
-			indentInfo:						(!this._indentInfoEqual(prevOpts.indentInfo, newOpts.indentInfo)),
-			observedOuterWidth:				(prevOpts.observedOuterWidth !== newOpts.observedOuterWidth),
-			observedOuterHeight:			(prevOpts.observedOuterHeight !== newOpts.observedOuterHeight),
-			lineHeight:						(prevOpts.lineHeight !== newOpts.lineHeight),
-			pageSize:						(prevOpts.pageSize !== newOpts.pageSize),
-			typicalHalfwidthCharacterWidth:	(prevOpts.typicalHalfwidthCharacterWidth !== newOpts.typicalHalfwidthCharacterWidth),
-			typicalFullwidthCharacterWidth:	(prevOpts.typicalFullwidthCharacterWidth !== newOpts.typicalFullwidthCharacterWidth),
-			fontSize:						(prevOpts.fontSize !== newOpts.fontSize)
-		};
-	}
-
-	private static _scrollbarOptsEqual(a:editorCommon.IInternalEditorScrollbarOptions, b:editorCommon.IInternalEditorScrollbarOptions): boolean {
-		return (
-			a.arrowSize === b.arrowSize
-			&& a.vertical === b.vertical
-			&& a.horizontal === b.horizontal
-			&& a.useShadows === b.useShadows
-			&& a.verticalHasArrows === b.verticalHasArrows
-			&& a.horizontalHasArrows === b.horizontalHasArrows
-			&& a.handleMouseWheel === b.handleMouseWheel
-			&& a.horizontalScrollbarSize === b.horizontalScrollbarSize
-			&& a.horizontalSliderSize === b.horizontalSliderSize
-			&& a.verticalScrollbarSize === b.verticalScrollbarSize
-			&& a.verticalSliderSize === b.verticalSliderSize
-			&& a.mouseWheelScrollSensitivity === b.mouseWheelScrollSensitivity
-		);
-	}
-
-	private static _stylingInfoEqual(a:editorCommon.IEditorStyling, b:editorCommon.IEditorStyling): boolean {
-		return (
-			a.editorClassName === b.editorClassName
-			&& a.fontFamily === b.fontFamily
-			&& a.fontSize === b.fontSize
-			&& a.lineHeight === b.lineHeight
-		);
-	}
-
-	private static _wrappingInfoEqual(a:editorCommon.IEditorWrappingInfo, b:editorCommon.IEditorWrappingInfo): boolean {
-		return (
-			a.isViewportWrapping === b.isViewportWrapping
-			&& a.wrappingColumn === b.wrappingColumn
-		);
-	}
-
-	private static _indentInfoEqual(a:editorCommon.IInternalIndentationOptions, b:editorCommon.IInternalIndentationOptions): boolean {
-		return (
-			a.insertSpaces === b.insertSpaces
-			&& a.tabSize === b.tabSize
-		);
-	}
-
-	private static _numberArraysEqual(a:number[], b:number[]): boolean {
-		if (a.length !== b.length) {
-			return false;
-		}
-		for (let i = 0; i < a.length; i++) {
-			if (a[i] !== b[i]) {
-				return false;
-			}
-		}
-		return true;
-	}
-}
-
-export interface ICSSConfig {
-	typicalHalfwidthCharacterWidth:number;
-	typicalFullwidthCharacterWidth:number;
-	maxDigitWidth: number;
-	lineHeight:number;
-	font:string;
-	fontSize:number;
 }
 
 function toBoolean(value:any): boolean {
@@ -498,18 +340,14 @@ function toFloat(source: any, defaultValue: number): number {
 	return r;
 }
 
-function toInteger(source:any, minimum?:number, maximum?:number): number {
+function toInteger(source:any, minimum:number = MIN_SAFE_INT, maximum:number = MAX_SAFE_INT): number {
 	let r = parseInt(source, 10);
 	if (isNaN(r)) {
 		r = 0;
 	}
-	if (typeof minimum === 'number') {
-		r = Math.max(minimum, r);
-	}
-	if (typeof maximum === 'number') {
-		r = Math.min(maximum, r);
-	}
-	return r;
+	r = Math.max(minimum, r);
+	r = Math.min(maximum, r);
+	return r | 0;
 }
 
 function toSortedIntegerArray(source:any): number[] {
@@ -522,6 +360,44 @@ function toSortedIntegerArray(source:any): number[] {
 	return r;
 }
 
+function wrappingIndentFromString(wrappingIndent:string): editorCommon.WrappingIndent {
+	if (wrappingIndent === 'indent') {
+		return editorCommon.WrappingIndent.Indent;
+	} else if (wrappingIndent === 'same') {
+		return editorCommon.WrappingIndent.Same;
+	} else {
+		return editorCommon.WrappingIndent.None;
+	}
+}
+
+function cursorStyleFromString(cursorStyle:string): editorCommon.TextEditorCursorStyle {
+	if (cursorStyle === 'line') {
+		return editorCommon.TextEditorCursorStyle.Line;
+	} else if (cursorStyle === 'block') {
+		return editorCommon.TextEditorCursorStyle.Block;
+	} else if (cursorStyle === 'underline') {
+		return editorCommon.TextEditorCursorStyle.Underline;
+	}
+	return editorCommon.TextEditorCursorStyle.Line;
+}
+
+function cursorBlinkingStyleFromString(cursorBlinkingStyle: string): editorCommon.TextEditorCursorBlinkingStyle {
+	switch (cursorBlinkingStyle) {
+		case 'blink':
+			return editorCommon.TextEditorCursorBlinkingStyle.Blink;
+		case 'smooth':
+			return editorCommon.TextEditorCursorBlinkingStyle.Smooth;
+		case 'phase':
+			return editorCommon.TextEditorCursorBlinkingStyle.Phase;
+		case 'expand':
+			return editorCommon.TextEditorCursorBlinkingStyle.Expand;
+		case 'visible': // maintain compatibility
+		case 'solid':
+			return editorCommon.TextEditorCursorBlinkingStyle.Solid;
+	}
+	return editorCommon.TextEditorCursorBlinkingStyle.Blink;
+}
+
 function toIntegerWithDefault(source:any, defaultValue:number): number {
 	if (typeof source === 'undefined') {
 		return defaultValue;
@@ -529,25 +405,11 @@ function toIntegerWithDefault(source:any, defaultValue:number): number {
 	return toInteger(source);
 }
 
-function toStringSet(source:any, allowedValues:string[], defaultValue:string): string {
-	if (typeof source !== 'string') {
-		return defaultValue;
-	}
-	if (allowedValues.indexOf(source) === -1) {
-		return defaultValue;
-	}
-	return source;
-}
-
 interface IValidatedIndentationOptions {
 	tabSizeIsAuto: boolean;
 	tabSize: number;
 	insertSpacesIsAuto: boolean;
 	insertSpaces: boolean;
-}
-
-export interface IIndentationGuesser {
-	(tabSize:number): editorCommon.IGuessedIndentation;
 }
 
 export interface IElementSizeObserver {
@@ -560,35 +422,27 @@ export interface IElementSizeObserver {
 
 export abstract class CommonEditorConfiguration extends Disposable implements editorCommon.IConfiguration {
 
-	public handlerDispatcher:editorCommon.IHandlerDispatcher;
-	public editor:editorCommon.IInternalEditorOptions;
-	public editorClone:editorCommon.IInternalEditorOptions;
+	public editor:editorCommon.InternalEditorOptions;
+	public editorClone:editorCommon.InternalEditorOptions;
 
 	protected _configWithDefaults:ConfigurationWithDefaults;
 	protected _elementSizeObserver: IElementSizeObserver;
-	private _indentationGuesser:IIndentationGuesser;
-	private _cachedGuessedIndentationTabSize: number;
-	private _cachedGuessedIndentation:editorCommon.IGuessedIndentation;
 	private _isDominatedByLongLines:boolean;
-	private _lineCount:number;
+	private _maxLineNumber:number;
 
 	private _onDidChange = this._register(new Emitter<editorCommon.IConfigurationChangedEvent>());
 	public onDidChange: Event<editorCommon.IConfigurationChangedEvent> = this._onDidChange.event;
 
-	constructor(options:any, elementSizeObserver: IElementSizeObserver = null, indentationGuesser:IIndentationGuesser = null) {
+	constructor(options:editorCommon.IEditorOptions, elementSizeObserver: IElementSizeObserver = null) {
 		super();
 		this._configWithDefaults = new ConfigurationWithDefaults(options);
 		this._elementSizeObserver = elementSizeObserver;
-		this._indentationGuesser = indentationGuesser;
-		this._cachedGuessedIndentationTabSize = -1;
-		this._cachedGuessedIndentation = null;
 		this._isDominatedByLongLines = false;
-		this._lineCount = 1;
-
-		this.handlerDispatcher = new HandlerDispatcher();
-
+		this._maxLineNumber = 1;
 		this.editor = this._computeInternalOptions();
-		this.editorClone = cloneInternalEditorOptions(this.editor);
+		this.editorClone = this.editor.clone();
+		this._register(EditorZoom.onDidChangeZoomLevel(_ => this._recomputeOptions()));
+		this._register(TabFocus.onDidChangeTabFocus(_ => this._recomputeOptions()));
 	}
 
 	public dispose(): void {
@@ -596,59 +450,58 @@ export abstract class CommonEditorConfiguration extends Disposable implements ed
 	}
 
 	protected _recomputeOptions(): void {
-		let oldOpts = this.editor;
-		this.editor = this._computeInternalOptions();
-		this.editorClone = cloneInternalEditorOptions(this.editor);
+		this._setOptions(this._computeInternalOptions());
+	}
 
-		let changeEvent = InternalEditorOptionsHelper.createConfigurationChangedEvent(oldOpts, this.editor);
-
-		let hasChanged = false;
-		for (let key in changeEvent) {
-			if (changeEvent.hasOwnProperty(key)) {
-				if (changeEvent[key]) {
-					hasChanged = true;
-					break;
-				}
-			}
+	private _setOptions(newOptions:editorCommon.InternalEditorOptions): void {
+		if (this.editor && this.editor.equals(newOptions)) {
+			return;
 		}
 
-		if (hasChanged) {
-			this._onDidChange.fire(changeEvent);
-		}
+		let changeEvent = this.editor.createChangeEvent(newOptions);
+		this.editor = newOptions;
+		this.editorClone = this.editor.clone();
+		this._onDidChange.fire(changeEvent);
 	}
 
 	public getRawOptions(): editorCommon.IEditorOptions {
 		return this._configWithDefaults.getEditorOptions();
 	}
 
-	private _computeInternalOptions(): editorCommon.IInternalEditorOptions {
+	private _computeInternalOptions(): editorCommon.InternalEditorOptions {
 		let opts = this._configWithDefaults.getEditorOptions();
 
 		let editorClassName = this._getEditorClassName(opts.theme, toBoolean(opts.fontLigatures));
-		let requestedFontFamily = opts.fontFamily || '';
-		let requestedFontSize = toInteger(opts.fontSize, 0, 100);
-		let requestedLineHeight = toInteger(opts.lineHeight, 0, 150);
+		let fontFamily = String(opts.fontFamily) || DefaultConfig.editor.fontFamily;
+		let fontSize = toInteger(opts.fontSize, 0, 100) || DefaultConfig.editor.fontSize;
 
-		let adjustedLineHeight = requestedLineHeight;
-		if (requestedFontSize > 0 && requestedLineHeight === 0) {
-			adjustedLineHeight = Math.round(1.3 * requestedFontSize);
+		let lineHeight = toInteger(opts.lineHeight, 0, 150);
+		if (lineHeight === 0) {
+			lineHeight = Math.round(GOLDEN_LINE_HEIGHT_RATIO * fontSize);
 		}
+		let editorZoomLevelMultiplier = 1 + (EditorZoom.getZoomLevel() * 0.1);
+		fontSize *= editorZoomLevelMultiplier;
+		lineHeight *= editorZoomLevelMultiplier;
 
-		let indentationOptions = CommonEditorConfiguration._computeIndentationOptions(opts, (tabSize) => this._guessIndentationOptionsCached(tabSize));
+		let disableTranslate3d = toBoolean(opts.disableTranslate3d);
+		let canUseTranslate3d = this._getCanUseTranslate3d();
+		if (disableTranslate3d) {
+			canUseTranslate3d = false;
+		}
 
 		return InternalEditorOptionsHelper.createInternalEditorOptions(
 			this.getOuterWidth(),
 			this.getOuterHeight(),
 			opts,
+			this.readConfiguration(new editorCommon.BareFontInfo({
+				fontFamily: fontFamily,
+				fontSize: fontSize,
+				lineHeight: lineHeight
+			})),
 			editorClassName,
-			requestedFontFamily,
-			requestedFontSize,
-			requestedLineHeight,
-			adjustedLineHeight,
-			this.readConfiguration(editorClassName, requestedFontFamily, requestedFontSize, adjustedLineHeight),
 			this._isDominatedByLongLines,
-			this._lineCount,
-			indentationOptions
+			this._maxLineNumber,
+			canUseTranslate3d
 		);
 	}
 
@@ -662,129 +515,9 @@ export abstract class CommonEditorConfiguration extends Disposable implements ed
 		this._recomputeOptions();
 	}
 
-	public setLineCount(lineCount:number): void {
-		this._lineCount = lineCount;
+	public setMaxLineNumber(maxLineNumber:number): void {
+		this._maxLineNumber = maxLineNumber;
 		this._recomputeOptions();
-	}
-
-	public resetIndentationOptions(): void {
-		this._cachedGuessedIndentationTabSize = -1;
-		this._cachedGuessedIndentation = null;
-		this._recomputeOptions();
-	}
-
-	private _guessIndentationOptionsCached(tabSize:number): editorCommon.IGuessedIndentation {
-		if (!this._cachedGuessedIndentation || this._cachedGuessedIndentationTabSize !== tabSize) {
-			this._cachedGuessedIndentationTabSize = tabSize;
-
-			if (this._indentationGuesser) {
-				this._cachedGuessedIndentation = this._indentationGuesser(tabSize);
-			} else {
-				this._cachedGuessedIndentation = null;
-			}
-		}
-		return this._cachedGuessedIndentation;
-	}
-
-	private static _getValidatedIndentationOptions(opts: editorCommon.IEditorOptions): IValidatedIndentationOptions {
-		let r: IValidatedIndentationOptions = {
-			tabSizeIsAuto: false,
-			tabSize: 4,
-			insertSpacesIsAuto: false,
-			insertSpaces: true
-		};
-
-		if (opts.tabSize === 'auto') {
-			r.tabSizeIsAuto = true;
-		} else {
-			r.tabSize = toInteger(opts.tabSize, 1, 20);
-		}
-
-		if (opts.insertSpaces === 'auto') {
-			r.insertSpacesIsAuto = true;
-		} else {
-			r.insertSpaces = toBoolean(opts.insertSpaces);
-		}
-
-		return r;
-	}
-
-	private static _computeIndentationOptions(allOpts: editorCommon.IEditorOptions, indentationGuesser:IIndentationGuesser): editorCommon.IInternalIndentationOptions {
-		let opts = this._getValidatedIndentationOptions(allOpts);
-
-		let guessedIndentation:editorCommon.IGuessedIndentation = null;
-		if (opts.tabSizeIsAuto || opts.insertSpacesIsAuto) {
-			// We must use the indentation guesser to come up with the indentation options
-			guessedIndentation = indentationGuesser(opts.tabSize);
-		}
-
-		let r: editorCommon.IInternalIndentationOptions = {
-			insertSpaces: opts.insertSpaces,
-			tabSize: opts.tabSize
-		};
-
-		if (guessedIndentation && opts.tabSizeIsAuto) {
-			r.tabSize = guessedIndentation.tabSize;
-		}
-		if (guessedIndentation && opts.insertSpacesIsAuto) {
-			r.insertSpaces = guessedIndentation.insertSpaces;
-		}
-
-		return r;
-	}
-
-	public getIndentationOptions(): editorCommon.IInternalIndentationOptions {
-		return this.editor.indentInfo;
-	}
-
-	private _normalizeIndentationFromWhitespace(str:string): string {
-		let indentation = this.getIndentationOptions(),
-			spacesCnt = 0,
-			i:number;
-
-		for (i = 0; i < str.length; i++) {
-			if (str.charAt(i) === '\t') {
-				spacesCnt += indentation.tabSize;
-			} else {
-				spacesCnt++;
-			}
-		}
-
-		let result = '';
-		if (!indentation.insertSpaces) {
-			let tabsCnt = Math.floor(spacesCnt / indentation.tabSize);
-			spacesCnt = spacesCnt % indentation.tabSize;
-			for (i = 0; i < tabsCnt; i++) {
-				result += '\t';
-			}
-		}
-
-		for (i = 0; i < spacesCnt; i++) {
-			result += ' ';
-		}
-
-		return result;
-	}
-
-	public normalizeIndentation(str:string): string {
-		let firstNonWhitespaceIndex = strings.firstNonWhitespaceIndex(str);
-		if (firstNonWhitespaceIndex === -1) {
-			firstNonWhitespaceIndex = str.length;
-		}
-		return this._normalizeIndentationFromWhitespace(str.substring(0, firstNonWhitespaceIndex)) + str.substring(firstNonWhitespaceIndex);
-	}
-
-	public getOneIndent(): string {
-		let indentation = this.getIndentationOptions();
-		if (indentation.insertSpaces) {
-			let result = '';
-			for (let i = 0; i < indentation.tabSize; i++) {
-				result += ' ';
-			}
-			return result;
-		} else {
-			return '\t';
-		}
 	}
 
 	protected abstract _getEditorClassName(theme:string, fontLigatures:boolean): string;
@@ -793,7 +526,9 @@ export abstract class CommonEditorConfiguration extends Disposable implements ed
 
 	protected abstract getOuterHeight(): number;
 
-	protected abstract readConfiguration(editorClassName: string, fontFamily: string, fontSize: number, lineHeight: number): ICSSConfig;
+	protected abstract _getCanUseTranslate3d(): boolean;
+
+	protected abstract readConfiguration(styling: editorCommon.BareFontInfo): editorCommon.FontInfo;
 }
 
 /**
@@ -850,11 +585,11 @@ export class EditorConfiguration {
 }
 
 let configurationRegistry = <IConfigurationRegistry>Registry.as(Extensions.Configuration);
-configurationRegistry.registerConfiguration({
+let editorConfiguration:IConfigurationNode = {
 	'id': 'editor',
 	'order': 5,
 	'type': 'object',
-	'title': nls.localize('editorConfigurationTitle', "Editor configuration"),
+	'title': nls.localize('editorConfigurationTitle', "Editor"),
 	'properties' : {
 		'editor.fontFamily' : {
 			'type': 'string',
@@ -869,7 +604,7 @@ configurationRegistry.registerConfiguration({
 		'editor.lineHeight' : {
 			'type': 'number',
 			'default': DefaultConfig.editor.lineHeight,
-			'description': nls.localize('lineHeight', "Controls the line height.")
+			'description': nls.localize('lineHeight', "Controls the line height. Use 0 to compute the lineHeight from the fontSize.")
 		},
 		'editor.lineNumbers' : {
 			'type': 'boolean',
@@ -895,31 +630,22 @@ configurationRegistry.registerConfiguration({
 			'description': nls.localize('wordSeparators', "Characters that will be used as word separators when doing word related navigations or operations")
 		},
 		'editor.tabSize' : {
-			'oneOf': [
-				{
-					'type': 'number'
-				},
-				{
-					'type': 'string',
-					'enum': ['auto']
-				}
-			],
-			'default': DefaultConfig.editor.tabSize,
+			'type': 'number',
+			'default': DEFAULT_INDENTATION.tabSize,
 			'minimum': 1,
-			'description': nls.localize('tabSize', "Controls the rendering size of tabs in characters. Accepted values: \"auto\", 2, 4, 6, etc. If set to \"auto\", the value will be guessed when a file is opened.")
+			'description': nls.localize('tabSize', "The number of spaces a tab is equal to."),
+			'errorMessage': nls.localize('tabSize.errorMessage', "Expected 'number'. Note that the value \"auto\" has been replaced by the `editor.detectIndentation` setting.")
 		},
 		'editor.insertSpaces' : {
-			'oneOf': [
-				{
-					'type': 'boolean'
-				},
-				{
-					'type': 'string',
-					'enum': ['auto']
-				}
-			],
-			'default': DefaultConfig.editor.insertSpaces,
-			'description': nls.localize('insertSpaces', "Controls if the editor will insert spaces for tabs. Accepted values:  \"auto\", true, false. If set to \"auto\", the value will be guessed when a file is opened.")
+			'type': 'boolean',
+			'default': DEFAULT_INDENTATION.insertSpaces,
+			'description': nls.localize('insertSpaces', "Insert spaces when pressing Tab."),
+			'errorMessage': nls.localize('insertSpaces.errorMessage', "Expected 'boolean'. Note that the value \"auto\" has been replaced by the `editor.detectIndentation` setting.")
+		},
+		'editor.detectIndentation' : {
+			'type': 'boolean',
+			'default': DEFAULT_INDENTATION.detectIndentation,
+			'description': nls.localize('detectIndentation', "When opening a file, `editor.tabSize` and `editor.insertSpaces` will be detected based on the file contents.")
 		},
 		'editor.roundedSelection' : {
 			'type': 'boolean',
@@ -935,7 +661,7 @@ configurationRegistry.registerConfiguration({
 			'type': 'integer',
 			'default': DefaultConfig.editor.wrappingColumn,
 			'minimum': -1,
-			'description': nls.localize('wrappingColumn', "Controls after how many characters the editor will wrap to the next line. Setting this to 0 turns on viewport width wrapping")
+			'description': nls.localize('wrappingColumn', "Controls after how many characters the editor will wrap to the next line. Setting this to 0 turns on viewport width wrapping (word wrapping). Setting this to -1 forces the editor to never wrap.")
 		},
 		'editor.wrappingIndent' : {
 			'type': 'string',
@@ -959,6 +685,11 @@ configurationRegistry.registerConfiguration({
 			'minimum': 0,
 			'description': nls.localize('quickSuggestionsDelay', "Controls the delay in ms after which quick suggestions will show up")
 		},
+		'editor.parameterHints' : {
+			'type': 'boolean',
+			'default': DefaultConfig.editor.parameterHints,
+			'description': nls.localize('parameterHints', "Enables parameter hints")
+		},
 		'editor.autoClosingBrackets' : {
 			'type': 'boolean',
 			'default': DefaultConfig.editor.autoClosingBrackets,
@@ -974,16 +705,32 @@ configurationRegistry.registerConfiguration({
 			'default': DefaultConfig.editor.suggestOnTriggerCharacters,
 			'description': nls.localize('suggestOnTriggerCharacters', "Controls if suggestions should automatically show up when typing trigger characters")
 		},
+		'editor.acceptSuggestionOnEnter' : {
+			'type': 'boolean',
+			'default': DefaultConfig.editor.acceptSuggestionOnEnter,
+			'description': nls.localize('acceptSuggestionOnEnter', "Controls if suggestions should be accepted 'Enter' - in addition to 'Tab'. Helps to avoid ambiguity between inserting new lines or accepting suggestions.")
+		},
+		'editor.snippetSuggestions': {
+			'type': 'string',
+			'enum': ['top', 'bottom', 'inline', 'none'],
+			'default': DefaultConfig.editor.snippetSuggestions,
+			'description': nls.localize('snippetSuggestions', "Controls whether snippets are shown with other suggestions and how they are sorted.")
+		},
+		'editor.wordBasedSuggestions': {
+			'type': 'boolean',
+			'default': DefaultConfig.editor.wordBasedSuggestions,
+			'description': nls.localize('wordBasedSuggestions', "Enable word based suggestions.")
+		},
+		'editor.tabCompletion': {
+			'type': 'boolean',
+			'default': DefaultConfig.editor.tabCompletion,
+			'description': nls.localize('tabCompletion', "Insert snippets when their prefix matches. Works best when 'quickSuggestions' aren't enabled.")
+		},
 		'editor.selectionHighlight' : {
 			'type': 'boolean',
 			'default': DefaultConfig.editor.selectionHighlight,
 			'description': nls.localize('selectionHighlight', "Controls whether the editor should highlight similar matches to the selection")
 		},
-//		'editor.outlineMarkers' : {
-//			'type': 'boolean',
-//			'default': DefaultConfig.editor.outlineMarkers,
-//			'description': nls.localize('outlineMarkers', "Controls whether the editor should draw horizontal lines before classes and methods")
-//		},
 		'editor.overviewRulerLanes' : {
 			'type': 'integer',
 			'default': 3,
@@ -991,15 +738,20 @@ configurationRegistry.registerConfiguration({
 		},
 		'editor.cursorBlinking' : {
 			'type': 'string',
-			'enum': ['blink', 'visible', 'hidden'],
+			'enum': ['blink', 'smooth', 'phase', 'expand', 'solid'],
 			'default': DefaultConfig.editor.cursorBlinking,
-			'description': nls.localize('cursorBlinking', "Controls the cursor blinking animation, accepted values are 'blink', 'visible', and 'hidden'")
+			'description': nls.localize('cursorBlinking', "Control the cursor animation style, possible values are 'blink', 'smooth', 'phase', 'expand' and 'solid'")
+		},
+		'editor.mouseWheelZoom': {
+			'type': 'boolean',
+			'default': DefaultConfig.editor.mouseWheelZoom,
+			'description': nls.localize('mouseWheelZoom', "Zoom the font of the editor when using mouse wheel and holding Ctrl")
 		},
 		'editor.cursorStyle' : {
 			'type': 'string',
-			'enum': ['block', 'line'],
+			'enum': ['block', 'line', 'underline'],
 			'default': DefaultConfig.editor.cursorStyle,
-			'description': nls.localize('cursorStyle', "Controls the cursor style, accepted values are 'block' and 'line'")
+			'description': nls.localize('cursorStyle', "Controls the cursor style, accepted values are 'block', 'line' and 'underline'")
 		},
 		'editor.fontLigatures' : {
 			'type': 'boolean',
@@ -1016,6 +768,16 @@ configurationRegistry.registerConfiguration({
 			default: DefaultConfig.editor.renderWhitespace,
 			description: nls.localize('renderWhitespace', "Controls whether the editor should render whitespace characters")
 		},
+		'editor.renderControlCharacters': {
+			'type': 'boolean',
+			default: DefaultConfig.editor.renderControlCharacters,
+			description: nls.localize('renderControlCharacters', "Controls whether the editor should render control characters")
+		},
+		'editor.renderIndentGuides': {
+			'type': 'boolean',
+			default: DefaultConfig.editor.renderIndentGuides,
+			description: nls.localize('renderIndentGuides', "Controls whether the editor should render indent guides")
+		},
 		'editor.referenceInfos' : {
 			'type': 'boolean',
 			'default': DefaultConfig.editor.referenceInfos,
@@ -1025,6 +787,21 @@ configurationRegistry.registerConfiguration({
 			'type': 'boolean',
 			'default': DefaultConfig.editor.folding,
 			'description': nls.localize('folding', "Controls whether the editor has code folding enabled")
+		},
+		'editor.useTabStops' : {
+			'type': 'boolean',
+			'default': DefaultConfig.editor.useTabStops,
+			'description': nls.localize('useTabStops', "Inserting and deleting whitespace follows tab stops")
+		},
+		'editor.trimAutoWhitespace' : {
+			'type': 'boolean',
+			'default': DEFAULT_TRIM_AUTO_WHITESPACE,
+			'description': nls.localize('trimAutoWhitespace', "Remove trailing auto inserted whitespace")
+		},
+		'editor.stablePeek' : {
+			'type': 'boolean',
+			'default': false,
+			'description': nls.localize('stablePeek', "Keep peek editors open even when double clicking their content or when hitting Escape.")
 		},
 		'diffEditor.renderSideBySide' : {
 			'type': 'boolean',
@@ -1037,4 +814,14 @@ configurationRegistry.registerConfiguration({
 			'description': nls.localize('ignoreTrimWhitespace', "Controls if the diff editor shows changes in leading or trailing whitespace as diffs")
 		}
 	}
-});
+};
+
+if (platform.isLinux) {
+	editorConfiguration['properties']['editor.selectionClipboard'] = {
+		'type': 'boolean',
+		'default': DefaultConfig.editor.selectionClipboard,
+		'description': nls.localize('selectionClipboard', "Controls if the Linux primary clipboard should be supported.")
+	};
+}
+
+configurationRegistry.registerConfiguration(editorConfiguration);

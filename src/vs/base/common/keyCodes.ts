@@ -492,16 +492,21 @@ export class CommonKeybindings {
 	public static CTRLCMD_BACKSPACE: number = KeyMod.CtrlCmd | KeyCode.Backspace;
 
 	public static UP_ARROW: number = KeyCode.UpArrow;
+	public static WINCTRL_P: number = KeyMod.WinCtrl | KeyCode.KEY_P;
 	public static SHIFT_UP_ARROW: number = KeyMod.Shift | KeyCode.UpArrow;
 	public static CTRLCMD_UP_ARROW: number = KeyMod.CtrlCmd | KeyCode.UpArrow;
 
 	public static DOWN_ARROW: number = KeyCode.DownArrow;
+	public static WINCTRL_N: number = KeyMod.WinCtrl | KeyCode.KEY_N;
 	public static SHIFT_DOWN_ARROW: number = KeyMod.Shift | KeyCode.DownArrow;
 	public static CTRLCMD_DOWN_ARROW: number = KeyMod.CtrlCmd | KeyCode.DownArrow;
 
 	public static LEFT_ARROW: number = KeyCode.LeftArrow;
 
 	public static RIGHT_ARROW: number = KeyCode.RightArrow;
+
+	public static HOME: number = KeyCode.Home;
+	public static END: number = KeyCode.End;
 
 	public static PAGE_UP: number = KeyCode.PageUp;
 	public static SHIFT_PAGE_UP: number = KeyMod.Shift | KeyCode.PageUp;
@@ -523,6 +528,13 @@ export class Keybinding {
 	 */
 	private static _toUSLabel(value:number, Platform:ISimplifiedPlatform): string {
 		return _asString(value, (Platform.isMacintosh ? MacUIKeyLabelProvider.INSTANCE : ClassicUIKeyLabelProvider.INSTANCE), Platform);
+	}
+
+	/**
+	 * Format the binding to a format appropiate for placing in an aria-label.
+	 */
+	private static _toUSAriaLabel(value:number, Platform:ISimplifiedPlatform): string {
+		return _asString(value, AriaKeyLabelProvider.INSTANCE, Platform);
 	}
 
 	/**
@@ -548,7 +560,7 @@ export class Keybinding {
 
 	/**
 	 * This prints the binding in a format suitable for electron's accelerators.
-	 * See https://github.com/atom/electron/blob/master/docs/api/accelerator.md
+	 * See https://github.com/electron/electron/blob/master/docs/api/accelerator.md
 	 */
 	private static _toElectronAccelerator(value:number, Platform:ISimplifiedPlatform): string {
 		if (BinaryKeybindings.hasChord(value)) {
@@ -708,6 +720,13 @@ export class Keybinding {
 	}
 
 	/**
+	 * Format the binding to a format appropiate for placing in an aria-label.
+	 */
+	public _toUSAriaLabel(Platform:ISimplifiedPlatform = defaultPlatform): string {
+		return Keybinding._toUSAriaLabel(this.value, Platform);
+	}
+
+	/**
 	 * Format the binding to a format appropiate for rendering in the UI
 	 */
 	public _toUSHTMLLabel(Platform:ISimplifiedPlatform = defaultPlatform): IHTMLContentElement[] {
@@ -730,7 +749,7 @@ export class Keybinding {
 
 	/**
 	 * This prints the binding in a format suitable for electron's accelerators.
-	 * See https://github.com/atom/electron/blob/master/docs/api/accelerator.md
+	 * See https://github.com/electron/electron/blob/master/docs/api/accelerator.md
 	 */
 	public _toElectronAccelerator(Platform:ISimplifiedPlatform = defaultPlatform): string {
 		return Keybinding._toElectronAccelerator(this.value, Platform);
@@ -814,6 +833,24 @@ export class MacUIKeyLabelProvider implements IKeyBindingLabelProvider {
 				return MacUIKeyLabelProvider.downArrowUnicodeLabel;
 		}
 
+		return KeyCode.toString(keyCode);
+	}
+}
+
+/**
+ * Aria label provider for Mac.
+ */
+export class AriaKeyLabelProvider implements IKeyBindingLabelProvider {
+	public static INSTANCE = new MacUIKeyLabelProvider();
+
+	public ctrlKeyLabel = nls.localize('ctrlKey.long', "Control");
+	public shiftKeyLabel = nls.localize('shiftKey.long', "Shift");
+	public altKeyLabel = nls.localize('altKey.long', "Alt");
+	public cmdKeyLabel = nls.localize('cmdKey.long', "Command");
+	public windowsKeyLabel = nls.localize('windowsKey.long', "Windows");
+	public modifierSeparator = '+';
+
+	public getLabelForKey(keyCode:KeyCode): string {
 		return KeyCode.toString(keyCode);
 	}
 }

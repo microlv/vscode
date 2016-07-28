@@ -8,19 +8,21 @@
 import 'vs/css!./quickFix';
 import * as nls from 'vs/nls';
 import {illegalArgument, onUnexpectedError} from 'vs/base/common/errors';
-import {ListenerUnbind} from 'vs/base/common/eventEmitter';
 import * as timer from 'vs/base/common/timer';
 import {TPromise} from 'vs/base/common/winjs.base';
 import * as dom from 'vs/base/browser/dom';
 import {IMouseEvent} from 'vs/base/browser/mouseEvent';
-import {IDataSource, IFocusEvent, IRenderer, ISelectionEvent, ITree} from 'vs/base/parts/tree/browser/tree';
+import {IDataSource, IFocusEvent, IRenderer, ISelectionEvent, ITree, IAccessibilityProvider} from 'vs/base/parts/tree/browser/tree';
 import {DefaultController} from 'vs/base/parts/tree/browser/treeDefaults';
 import {Tree} from 'vs/base/parts/tree/browser/treeImpl';
 import {ITelemetryService} from 'vs/platform/telemetry/common/telemetry';
-import {EventType, ICursorSelectionChangedEvent, IRange} from 'vs/editor/common/editorCommon';
+import {ICursorSelectionChangedEvent, IRange} from 'vs/editor/common/editorCommon';
 import {ContentWidgetPositionPreference, ICodeEditor, IContentWidget, IContentWidgetPosition} from 'vs/editor/browser/editorBrowser';
 import {IQuickFix2} from '../common/quickFix';
 import {QuickFixModel} from './quickFixModel';
+import {alert} from 'vs/base/browser/ui/aria/aria';
+import {ScrollbarVisibility} from 'vs/base/common/scrollable';
+import {IDisposable, dispose} from 'vs/base/common/lifecycle';
 
 var $ = dom.emmet;
 
@@ -28,6 +30,10 @@ function isQuickFix(quickfix: any): quickfix is IQuickFix2 {
 	return quickfix
 		&& typeof (<IQuickFix2>quickfix).command === 'object'
 		&& typeof (<IQuickFix2> quickfix).command.title === 'string';
+}
+
+function getAriaAlertLabel(item: IQuickFix2): string {
+	return nls.localize('ariaCurrentFix',"{0}, quick fix suggestion", item.command.title);
 }
 
 // To be used as a tree element when we want to show a message
@@ -118,6 +124,16 @@ class Controller extends DefaultController {
 	}
 }
 
+export class AccessibilityProvider implements IAccessibilityProvider {
+	constructor() { }
+
+	public getAriaLabel(tree: ITree, element: any): string {
+		if (isQuickFix(element)) {
+			return getAriaAlertLabel(<IQuickFix2> element);
+		}
+	}
+}
+
 function getHeight(tree:ITree, element:any): number {
 	// var fix = <IQuickFix2>element;
 
@@ -191,8 +207,8 @@ export class QuickFixSelectionWidget implements IContentWidget {
 	private isActive: boolean;
 	private isLoading: boolean;
 	private isAuto: boolean;
-	private listenersToRemove: ListenerUnbind[];
-	private modelListenersToRemove: ListenerUnbind[];
+	private listenersToRemove: IDisposable[];
+	private modelListenersToRemove: IDisposable[];
 	private model: QuickFixModel;
 
 	private telemetryData: ITelemetryData;
@@ -233,16 +249,17 @@ export class QuickFixSelectionWidget implements IContentWidget {
 		this.tree = new Tree(this.domnode, {
 			dataSource: new DataSource(),
 			renderer: new Renderer(),
-			controller: new Controller()
+			controller: new Controller(),
+			accessibilityProvider: new AccessibilityProvider()
 		}, {
 			twistiePixels: 0,
 			alwaysFocused: true,
-			verticalScrollMode: 'visible',
+			verticalScrollMode: ScrollbarVisibility.Visible,
 			useShadows: false,
 			ariaLabel: nls.localize('treeAriaLabel', "Quick Fix")
 		});
 
-		this.listenersToRemove.push(this.tree.addListener('selection', (e:ISelectionEvent) => {
+		this.listenersToRemove.push(this.tree.addListener2('selection', (e:ISelectionEvent) => {
 			if (e.selection && e.selection.length > 0) {
 				var element = e.selection[0];
 				if (isQuickFix(element) && !(element instanceof MessageRoot) && !(element instanceof Message)) {
@@ -250,6 +267,8 @@ export class QuickFixSelectionWidget implements IContentWidget {
 					this.telemetryData.selectedIndex = this.tree.getInput().indexOf(element);
 					this.telemetryData.wasCancelled = false;
 					this.submitTelemetryData();
+
+					alert(nls.localize('quickFixAriaAccepted', "{0}, accepted", element.command.title));
 
 					this.model.accept(element, this.range);
 					this.editor.focus();
@@ -259,7 +278,7 @@ export class QuickFixSelectionWidget implements IContentWidget {
 
 		var oldFocus: any = null;
 
-		this.listenersToRemove.push(this.tree.addListener('focus', (e:IFocusEvent) => {
+		this.listenersToRemove.push(this.tree.addListener2('focus', (e:IFocusEvent) => {
 			var focus = e.focus;
 			var payload = e.payload;
 
@@ -276,6 +295,9 @@ export class QuickFixSelectionWidget implements IContentWidget {
 
 			if (focus) {
 				elementsToRefresh.push(focus);
+				if (isQuickFix(focus)) {
+					this._ariaAlert(getAriaAlertLabel(focus));
+				}
 			}
 
 			oldFocus = focus;
@@ -291,13 +313,24 @@ export class QuickFixSelectionWidget implements IContentWidget {
 
 		this.editor.addContentWidget(this);
 
-		this.listenersToRemove.push(this.editor.addListener(EventType.CursorSelectionChanged, (e: ICursorSelectionChangedEvent) => {
+		this.listenersToRemove.push(this.editor.onDidChangeCursorSelection((e: ICursorSelectionChangedEvent) => {
 			if (this.isActive) {
 				this.editor.layoutContentWidget(this);
 			}
 		}));
 
 		this.hide();
+	}
+
+	private _lastAriaAlertLabel: string;
+	private _ariaAlert(newAriaAlertLabel:string): void {
+		if (this._lastAriaAlertLabel === newAriaAlertLabel) {
+			return;
+		}
+		this._lastAriaAlertLabel = newAriaAlertLabel;
+		if (this._lastAriaAlertLabel) {
+			alert(this._lastAriaAlertLabel);
+		}
 	}
 
 	public setModel(newModel: QuickFixModel) : void {
@@ -307,9 +340,9 @@ export class QuickFixSelectionWidget implements IContentWidget {
 		var timer : timer.ITimerEvent = null,
 			loadingHandle:number;
 
-		this.modelListenersToRemove.push(this.model.addListener('loading', (e: any) => {
+		this.modelListenersToRemove.push(this.model.addListener2('loading', (e: any) => {
 			if (!this.isActive) {
-				timer = this.telemetryService.start('QuickFixSelectionWidgetLoadingTime');
+				timer = this.telemetryService.timedPublicLog('QuickFixSelectionWidgetLoadingTime');
 				this.isLoading = true;
 				this.isAuto = !!e.auto;
 
@@ -330,7 +363,7 @@ export class QuickFixSelectionWidget implements IContentWidget {
 			}
 		}));
 
-		this.modelListenersToRemove.push(this.model.addListener('suggest',(e: { fixes: IQuickFix2[]; range: IRange; auto:boolean; }) => {
+		this.modelListenersToRemove.push(this.model.addListener2('suggest',(e: { fixes: IQuickFix2[]; range: IRange; auto:boolean; }) => {
 			this.isLoading = false;
 
 			if(typeof loadingHandle !== 'undefined') {
@@ -372,7 +405,7 @@ export class QuickFixSelectionWidget implements IContentWidget {
 			}
 		}));
 
-		this.modelListenersToRemove.push(this.model.addListener('empty', (e: { auto:boolean; }) => {
+		this.modelListenersToRemove.push(this.model.addListener2('empty', (e: { auto:boolean; }) => {
 			var wasLoading = this.isLoading;
 			this.isLoading = false;
 
@@ -403,7 +436,7 @@ export class QuickFixSelectionWidget implements IContentWidget {
 			}
 		}));
 
-		this.modelListenersToRemove.push(this.model.addListener('cancel', (e:any) => {
+		this.modelListenersToRemove.push(this.model.addListener2('cancel', (e:any) => {
 			this.isLoading = false;
 
 			if(typeof loadingHandle !== 'undefined') {
@@ -499,10 +532,7 @@ export class QuickFixSelectionWidget implements IContentWidget {
 	}
 
 	private releaseModel() : void {
-		var listener:()=>void;
-		while (listener = this.modelListenersToRemove.pop()) {
-			listener();
-		}
+		this.modelListenersToRemove = dispose(this.modelListenersToRemove);
 		this.model = null;
 	}
 
@@ -570,9 +600,6 @@ export class QuickFixSelectionWidget implements IContentWidget {
 		this.tree.dispose();
 		this.tree = null;
 
-		this.listenersToRemove.forEach((element) => {
-			element();
-		});
-		this.listenersToRemove = null;
+		this.listenersToRemove = dispose(this.listenersToRemove);
 	}
 }

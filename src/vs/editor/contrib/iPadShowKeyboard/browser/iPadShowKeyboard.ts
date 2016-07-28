@@ -6,11 +6,10 @@
 'use strict';
 
 import 'vs/css!./iPadShowKeyboard';
-import {IDisposable, disposeAll} from 'vs/base/common/lifecycle';
+import {IDisposable, dispose} from 'vs/base/common/lifecycle';
 import * as browser from 'vs/base/browser/browser';
 import * as dom from 'vs/base/browser/dom';
-import {INullService} from 'vs/platform/instantiation/common/instantiation';
-import {EventType, IEditorContribution} from 'vs/editor/common/editorCommon';
+import {IEditorContribution} from 'vs/editor/common/editorCommon';
 import {ICodeEditor, IOverlayWidget, IOverlayWidgetPosition, OverlayWidgetPositionPreference} from 'vs/editor/browser/editorBrowser';
 import {EditorBrowserRegistry} from 'vs/editor/browser/editorBrowserExtensions';
 
@@ -22,11 +21,11 @@ export class IPadShowKeyboard implements IEditorContribution {
 	private widget:ShowKeyboardWidget;
 	private toDispose:IDisposable[];
 
-	constructor(editor:ICodeEditor, @INullService ns) {
+	constructor(editor:ICodeEditor) {
 		this.editor = editor;
 		this.toDispose = [];
 		if (browser.isIPad) {
-			this.toDispose.push(editor.addListener2(EventType.ConfigurationChanged, () => this.update()));
+			this.toDispose.push(editor.onDidChangeConfiguration(() => this.update()));
 			this.update();
 		}
 	}
@@ -52,7 +51,7 @@ export class IPadShowKeyboard implements IEditorContribution {
 	}
 
 	public dispose(): void {
-		this.toDispose = disposeAll(this.toDispose);
+		this.toDispose = dispose(this.toDispose);
 		if (this.widget) {
 			this.widget.dispose();
 			this.widget = null;
@@ -87,7 +86,7 @@ class ShowKeyboardWidget implements IOverlayWidget {
 
 	public dispose(): void {
 		this.editor.removeOverlayWidget(this);
-		this._toDispose = disposeAll(this._toDispose);
+		this._toDispose = dispose(this._toDispose);
 	}
 
 	// ----- IOverlayWidget API

@@ -7,8 +7,6 @@
 import * as nls from 'vs/nls';
 import {KeyCode, KeyMod} from 'vs/base/common/keyCodes';
 import {TPromise} from 'vs/base/common/winjs.base';
-import {INullService} from 'vs/platform/instantiation/common/instantiation';
-import {DefaultConfig} from 'vs/editor/common/config/defaultConfig';
 import {EditorAction} from 'vs/editor/common/editorAction';
 import {Behaviour} from 'vs/editor/common/editorActionEnablement';
 import {ICommonCodeEditor, IEditorActionDescriptorData} from 'vs/editor/common/editorCommon';
@@ -18,7 +16,7 @@ class ToggleWordWrapAction extends EditorAction {
 
 	static ID = 'editor.action.toggleWordWrap';
 
-	constructor(descriptor:IEditorActionDescriptorData, editor:ICommonCodeEditor, @INullService ns) {
+	constructor(descriptor:IEditorActionDescriptorData, editor:ICommonCodeEditor) {
 		super(descriptor, editor, Behaviour.TextFocus);
 	}
 
@@ -26,12 +24,16 @@ class ToggleWordWrapAction extends EditorAction {
 
 		let wrappingInfo = this.editor.getConfiguration().wrappingInfo;
 
+		let newWrappingColumn: number;
 		if (!wrappingInfo.isViewportWrapping) {
-			wrappingInfo.wrappingColumn = 0;
+			newWrappingColumn = 0;
 		} else {
-			wrappingInfo.wrappingColumn = DefaultConfig.editor.wrappingColumn;
+			newWrappingColumn = -1;
 		}
-		this.editor.updateOptions(wrappingInfo);
+
+		this.editor.updateOptions({
+			wrappingColumn: newWrappingColumn
+		});
 
 		return TPromise.as(true);
 	}
@@ -43,4 +45,4 @@ CommonEditorRegistry.registerEditorAction(new EditorActionDescriptor(ToggleWordW
 	primary: KeyMod.Alt | KeyCode.KEY_Z,
 	mac: { primary: KeyMod.Alt |  KeyCode.KEY_Z },
 	linux: { primary: KeyMod.Alt | KeyCode.KEY_Z }
-}));
+}, 'View: Toggle Word Wrap'));

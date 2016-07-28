@@ -5,8 +5,7 @@
 
 import * as assert from 'assert';
 import * as editorCommon from 'vs/editor/common/editorCommon';
-import {IMirrorModelEvents, MirrorModel, createMirrorModelFromString} from 'vs/editor/common/model/mirrorModel';
-import {createMockMode} from 'vs/editor/test/common/modesTestUtils';
+import {IMirrorModelEvents, MirrorModel, createTestMirrorModelFromString} from 'vs/editor/common/model/mirrorModel';
 
 function equalRange(left, right) {
 	if(left.startLineNumber !== right.startLineNumber) {
@@ -23,7 +22,7 @@ function equalRange(left, right) {
 
 function contentChangedFlushEvent(detail: editorCommon.IRawText): editorCommon.IModelContentChangedFlushEvent {
 	return {
-		changeType: editorCommon.EventType.ModelContentChangedFlush,
+		changeType: editorCommon.EventType.ModelRawContentChangedFlush,
 		isRedoing: false,
 		isUndoing: false,
 		versionId: 0,
@@ -33,7 +32,7 @@ function contentChangedFlushEvent(detail: editorCommon.IRawText): editorCommon.I
 
 function contentChangedLinesDeletedEvent(fromLineNumber: number, toLineNumber: number): editorCommon.IModelContentChangedLinesDeletedEvent {
 	return {
-		changeType: editorCommon.EventType.ModelContentChangedLinesDeleted,
+		changeType: editorCommon.EventType.ModelRawContentChangedLinesDeleted,
 		isRedoing: false,
 		isUndoing: false,
 		versionId: 0,
@@ -44,7 +43,7 @@ function contentChangedLinesDeletedEvent(fromLineNumber: number, toLineNumber: n
 
 function contentChangedLinesInsertedEvent(fromLineNumber: number, toLineNumber: number, detail: string): editorCommon.IModelContentChangedLinesInsertedEvent {
 	return {
-		changeType: editorCommon.EventType.ModelContentChangedLinesInserted,
+		changeType: editorCommon.EventType.ModelRawContentChangedLinesInserted,
 		isRedoing: false,
 		isUndoing: false,
 		versionId: 0,
@@ -56,7 +55,7 @@ function contentChangedLinesInsertedEvent(fromLineNumber: number, toLineNumber: 
 
 function contentChangedLineChanged(lineNumber: number, detail: string): editorCommon.IModelContentChangedLineChangedEvent {
 	return {
-		changeType: editorCommon.EventType.ModelContentChangedLineChanged,
+		changeType: editorCommon.EventType.ModelRawContentChangedLineChanged,
 		isRedoing: false,
 		isUndoing: false,
 		versionId: 0,
@@ -76,7 +75,7 @@ suite('Editor Model - MirrorModel', () => {
 	var mirrorModel:MirrorModel;
 
 	setup(() => {
-		mirrorModel = createMirrorModelFromString(null, 0, 'line1\nline2\nline3\nline4', editorCommon.DefaultEndOfLine.LF, createMockMode('mock.mode.id'));
+		mirrorModel = createTestMirrorModelFromString('line1\nline2\nline3\nline4');
 	});
 
 	teardown(() => {
@@ -104,7 +103,12 @@ suite('Editor Model - MirrorModel', () => {
 			],
 			BOM: '',
 			EOL: '\n',
-			defaultEOL: editorCommon.DefaultEndOfLine.LF
+			options: {
+				tabSize: 4,
+				insertSpaces: true,
+				trimAutoWhitespace: true,
+				defaultEOL: editorCommon.DefaultEndOfLine.LF
+			}
 		})]));
 
 		assert.equal(mirrorModel.getLineStart(1), 0);
@@ -115,18 +119,20 @@ suite('Editor Model - MirrorModel', () => {
 		assert.equal(mirrorModel.getOffsetFromPosition({lineNumber: 1, column: 1}), 0);
 		assert.equal(mirrorModel.getOffsetFromPosition({lineNumber: 1, column: 3}), 2);
 		assert.equal(mirrorModel.getOffsetFromPosition({lineNumber: 2, column: 1}), 6);
-		assert.equal(mirrorModel.getOffsetFromPosition({lineNumber: 4, column: 7}), 24);
+		assert.equal(mirrorModel.getOffsetFromPosition({lineNumber: 4, column: 6}), 23);
+		assert.equal(mirrorModel.getOffsetFromPosition({lineNumber: 4, column: 7}), 23);
 	});
 
 	test('get position from offset', () => {
 		assert.deepEqual(mirrorModel.getPositionFromOffset(0), {lineNumber: 1, column: 1});
 		assert.deepEqual(mirrorModel.getPositionFromOffset(2), {lineNumber: 1, column: 3});
 		assert.deepEqual(mirrorModel.getPositionFromOffset(6), {lineNumber: 2, column: 1});
-		assert.deepEqual(mirrorModel.getPositionFromOffset(24), {lineNumber: 4, column: 7});
+		assert.deepEqual(mirrorModel.getPositionFromOffset(23), {lineNumber: 4, column: 6});
+		assert.deepEqual(mirrorModel.getPositionFromOffset(24), {lineNumber: 4, column: 6});
 	});
 
 	test('get (all/unique) words', () => {
-		var model = createMirrorModelFromString(null, 0, 'foo bar foo bar', editorCommon.DefaultEndOfLine.LF, createMockMode('mock.mode.id'));
+		var model = createTestMirrorModelFromString('foo bar foo bar');
 		var words = model.getAllWords();
 		var uniqueWords = model.getAllUniqueWords();
 		assert.equal(words.length, 4);
@@ -138,7 +144,7 @@ suite('Editor Model - MirrorModel', () => {
 		assert.equal(uniqueWords[0], 'foo');
 		assert.equal(uniqueWords[1], 'bar');
 
-		model = createMirrorModelFromString(null, 0, 'foo bar\nfoo\nbar', editorCommon.DefaultEndOfLine.LF, createMockMode('mock.mode.id'));
+		model = createTestMirrorModelFromString('foo bar\nfoo\nbar');
 		words = model.getAllWords();
 		uniqueWords = model.getAllUniqueWords();
 		assert.equal(words.length, 4);
@@ -155,7 +161,7 @@ suite('Editor Model - MirrorModel', () => {
 		var pos = { lineNumber: 1, column: 3 };
 		assert.equal(mirrorModel.getWordAtPosition(pos).word, 'line1');
 
-		var model = createMirrorModelFromString(null, 0, 'foo bar 1234 :";\'', editorCommon.DefaultEndOfLine.LF, createMockMode('mock.mode.id'));
+		var model = createTestMirrorModelFromString('foo bar 1234 :";\'');
 		assert.equal(model.getWordAtPosition({lineNumber: 1, column: 1}).word, 'foo');
 		assert.equal(model.getWordAtPosition({lineNumber: 1, column: 2}).word, 'foo');
 		assert.equal(model.getWordAtPosition({lineNumber: 1, column: 3}).word, 'foo');
@@ -190,7 +196,7 @@ suite('Editor Model - MirrorModel', () => {
 		assert.equal(wordsWithRanges[3].text, 'line4');
 		equalRange(wordsWithRanges[3].range, { startLineNumber: 4, startColumn: 1, endLineNumber: 4, endColumn: 6 });
 
-		var model = createMirrorModelFromString(null, 0, 'foo bar\nfoo\nbar', editorCommon.DefaultEndOfLine.LF, createMockMode('mock.mode.id'));
+		var model = createTestMirrorModelFromString('foo bar\nfoo\nbar');
 		wordsWithRanges = model.getAllWordsWithRange();
 		assert.equal(wordsWithRanges.length, 4);
 		assert.equal(wordsWithRanges[0].text, 'foo');
@@ -209,7 +215,7 @@ suite('Editor Model - MirrorModel Eventing', () => {
 	var mirrorModel:MirrorModel;
 
 	setup(() => {
-		mirrorModel = createMirrorModelFromString(null, 0, 'line one\nline two\nline three\nline four', editorCommon.DefaultEndOfLine.LF, createMockMode('mock.mode.id'));
+		mirrorModel = createTestMirrorModelFromString('line one\nline two\nline three\nline four');
 	});
 
 	teardown(() => {
@@ -330,7 +336,12 @@ suite('Editor Model - MirrorModel Eventing', () => {
 			],
 			BOM: '',
 			EOL: '\n',
-			defaultEOL: editorCommon.DefaultEndOfLine.LF
+			options: {
+				tabSize: 4,
+				insertSpaces: true,
+				trimAutoWhitespace: true,
+				defaultEOL: editorCommon.DefaultEndOfLine.LF
+			}
 		})]));
 
 		assert.equal(mirrorModel.getLineContent(1), 'foo');

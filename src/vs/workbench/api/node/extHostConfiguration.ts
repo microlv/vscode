@@ -5,21 +5,19 @@
 'use strict';
 
 import {clone} from 'vs/base/common/objects';
-import {IDisposable, disposeAll} from 'vs/base/common/lifecycle';
-import {IThreadService, Remotable} from 'vs/platform/thread/common/thread';
-import {IConfigurationService, ConfigurationServiceEventTypes, IConfigurationServiceEvent} from 'vs/platform/configuration/common/configuration';
+import {illegalState} from 'vs/base/common/errors';
 import Event, {Emitter} from 'vs/base/common/event';
-import {INullService} from 'vs/platform/instantiation/common/instantiation';
 import {WorkspaceConfiguration} from 'vscode';
+import {ExtHostConfigurationShape} from './extHost.protocol';
 
-@Remotable.PluginHostContext('ExtHostConfiguration')
-export class ExtHostConfiguration {
+export class ExtHostConfiguration extends ExtHostConfigurationShape {
 
 	private _config: any;
 	private _hasConfig: boolean;
 	private _onDidChangeConfiguration: Emitter<void>;
 
-	constructor(@INullService ns) {
+	constructor() {
+		super();
 		this._onDidChangeConfiguration = new Emitter<void>();
 	}
 
@@ -27,7 +25,7 @@ export class ExtHostConfiguration {
 		return this._onDidChangeConfiguration && this._onDidChangeConfiguration.event;
 	}
 
-	public _acceptConfigurationChanged(config:any) {
+	public $acceptConfigurationChanged(config: any) {
 		this._config = config;
 		this._hasConfig = true;
 		this._onDidChangeConfiguration.fire(undefined);
@@ -35,16 +33,21 @@ export class ExtHostConfiguration {
 
 	public getConfiguration(section?: string): WorkspaceConfiguration {
 		if (!this._hasConfig) {
-			return;
+			throw illegalState('missing config');
 		}
 
 		const config = section
 			? ExtHostConfiguration._lookUp(section, this._config)
 			: this._config;
 
+		let result: any;
+		if (typeof config !== 'object') {
+			// this catches missing config and accessing values
+			result = {};
+		} else {
+			result = clone(config);
+		}
 
-		let result = config ? clone(config) : {};
-		// result = Object.freeze(result);
 		result.has = function(key: string): boolean {
 			return typeof ExtHostConfiguration._lookUp(key, config) !== 'undefined';
 		};
@@ -69,32 +72,5 @@ export class ExtHostConfiguration {
 		}
 
 		return node;
-	}
-}
-
-@Remotable.MainContext('MainProcessConfigurationServiceHelper')
-export class MainThreadConfiguration {
-
-	private _configurationService: IConfigurationService;
-	private _toDispose: IDisposable[];
-	private _proxy: ExtHostConfiguration;
-
-	constructor(@IConfigurationService configurationService: IConfigurationService,
-		@IThreadService threadService: IThreadService) {
-
-		this._configurationService = configurationService;
-		this._proxy = threadService.getRemotable(ExtHostConfiguration);
-
-		this._toDispose = [];
-		this._toDispose.push(this._configurationService.addListener2(ConfigurationServiceEventTypes.UPDATED, (e:IConfigurationServiceEvent) => {
-			this._proxy._acceptConfigurationChanged(e.config);
-		}));
-		this._configurationService.loadConfiguration().then((config) => {
-			this._proxy._acceptConfigurationChanged(config);
-		});
-	}
-
-	public dispose(): void {
-		this._toDispose = disposeAll(this._toDispose);
 	}
 }

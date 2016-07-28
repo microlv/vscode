@@ -6,9 +6,10 @@
 'use strict';
 
 import * as assert from 'assert';
-import {commands, workspace, Uri} from 'vscode';
+import {join} from 'path';
+import {commands, workspace, window, Uri, ViewColumn} from 'vscode';
 
-suite("commands namespace tests", () => {
+suite('commands namespace tests', () => {
 
 	test('getCommands', function(done) {
 
@@ -39,7 +40,28 @@ suite("commands namespace tests", () => {
 		}, done);
 	});
 
-	test('api-command: workbench.html.preview', function() {
+	test('editorCommand with extra args', function () {
+
+		let args: IArguments;
+		let registration = commands.registerTextEditorCommand('t1', function() {
+			args = arguments;
+		});
+
+		return workspace.openTextDocument(join(workspace.rootPath, './far.js')).then(doc => {
+			return window.showTextDocument(doc).then(editor => {
+				return commands.executeCommand('t1', 12345, commands);
+			}).then(() => {
+				assert.ok(args);
+				assert.equal(args.length, 4);
+				assert.ok(args[2] === 12345);
+				assert.ok(args[3] === commands);
+				registration.dispose();
+			});
+		});
+
+	});
+
+	test('api-command: vscode.previewHtm', function () {
 
 		let registration = workspace.registerTextDocumentContentProvider('speciale', {
 			provideTextDocumentContent(uri) {
@@ -47,12 +69,48 @@ suite("commands namespace tests", () => {
 			}
 		});
 
-		let virtualDocumentUri = Uri.parse('speciale://authority/path')
+		let virtualDocumentUri = Uri.parse('speciale://authority/path');
+		let title = 'A title';
 
-		return commands.executeCommand('vscode.previewHtml', virtualDocumentUri).then(success => {
+		return commands.executeCommand('vscode.previewHtml', virtualDocumentUri, ViewColumn.Three, title).then(success => {
 			assert.ok(success);
 			registration.dispose();
 		});
 
-	})
+	});
+
+	test('api-command: vscode.diff', function () {
+
+		let registration = workspace.registerTextDocumentContentProvider('sc', {
+			provideTextDocumentContent(uri) {
+				return `content of URI <b>${uri.toString()}</b>#${Math.random()}`;
+			}
+		});
+
+
+		let a = commands.executeCommand('vscode.diff', Uri.parse('sc:a'), Uri.parse('sc:b'), 'DIFF').then(value => {
+			assert.ok(value === void 0);
+			registration.dispose();
+		});
+
+		let b = commands.executeCommand('vscode.diff', Uri.parse('sc:a'), Uri.parse('sc:b')).then(value => {
+			assert.ok(value === void 0);
+			registration.dispose();
+		});
+
+		let c = commands.executeCommand('vscode.diff').then(() => assert.ok(false), () => assert.ok(true));
+		let d = commands.executeCommand('vscode.diff', 1, 2, 3).then(() => assert.ok(false), () => assert.ok(true));
+
+		return Promise.all([a, b, c, d]);
+	});
+
+	test('api-command: vscode.open', function () {
+		let uri = Uri.file(join(workspace.rootPath, './image.png'));
+		let a = commands.executeCommand('vscode.open', uri).then(() => assert.ok(true), () => assert.ok(false));
+		let b = commands.executeCommand('vscode.open', uri, ViewColumn.Two).then(() => assert.ok(true), () => assert.ok(false));
+		let c = commands.executeCommand('vscode.open').then(() => assert.ok(false), () => assert.ok(true));
+		let d = commands.executeCommand('vscode.open', uri, true).then(() => assert.ok(false), () => assert.ok(true));
+
+		return Promise.all([a, b, c, d]);
+	});
 });

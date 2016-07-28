@@ -9,7 +9,7 @@ import nls = require('vs/nls');
 import {Builder, $} from 'vs/base/browser/builder';
 import types = require('vs/base/common/types');
 import {Registry} from 'vs/platform/platform';
-import {Mode, IContext, IAutoFocus} from 'vs/base/parts/quickopen/common/quickOpen';
+import {Mode, IEntryRunContext, IAutoFocus} from 'vs/base/parts/quickopen/common/quickOpen';
 import {QuickOpenEntryItem, QuickOpenModel} from 'vs/base/parts/quickopen/browser/quickOpenModel';
 import {ITree, IElementCallback} from 'vs/base/parts/tree/browser/tree';
 import {IQuickOpenRegistry, Extensions, QuickOpenHandler} from 'vs/workbench/browser/quickopen';
@@ -106,7 +106,7 @@ class HelpEntry extends QuickOpenEntryItem {
 		return null;
 	}
 
-	public run(mode: Mode, context: IContext): boolean {
+	public run(mode: Mode, context: IEntryRunContext): boolean {
 		if (mode === Mode.OPEN || this.openOnPreview) {
 			this.quickOpenService.show(this.prefix);
 		}
@@ -135,8 +135,8 @@ export class HelpHandler extends QuickOpenHandler {
 		let workbenchScoped: HelpEntry[] = [];
 		let editorScoped: HelpEntry[] = [];
 		let entry: HelpEntry;
-		for (let i = 0; i < handlerDescriptors.length; i++) {
-			let handlerDescriptor = handlerDescriptors[i];
+
+		handlerDescriptors.sort((h1, h2) => h1.prefix.localeCompare(h2.prefix)).forEach((handlerDescriptor) => {
 			if (handlerDescriptor.prefix !== HELP_PREFIX) {
 
 				// Descriptor has multiple help entries
@@ -161,7 +161,7 @@ export class HelpHandler extends QuickOpenHandler {
 					workbenchScoped.push(entry);
 				}
 			}
-		}
+		});
 
 		// Add separator for workbench scoped handlers
 		if (workbenchScoped.length > 0) {

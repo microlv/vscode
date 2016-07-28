@@ -7,13 +7,10 @@
 import {IDisposable} from 'vs/base/common/lifecycle';
 import {Range} from 'vs/editor/common/core/range';
 import * as editorCommon from 'vs/editor/common/editorCommon';
+import {IDecorationsViewportData, InlineDecoration} from 'vs/editor/common/viewModel/viewModel';
 
 export interface IModelRangeToViewRangeConverter {
-	convertModelRangeToViewRange(modelRange:editorCommon.IRange, isWholeLine:boolean): editorCommon.IEditorRange;
-}
-
-interface IViewModelDecoration extends editorCommon.IModelDecoration {
-	modelRange: editorCommon.IRange;
+	convertModelRangeToViewRange(modelRange:editorCommon.IRange, isWholeLine:boolean): Range;
 }
 
 interface IViewModelDecorationSource {
@@ -23,14 +20,14 @@ interface IViewModelDecorationSource {
 	options: editorCommon.IModelDecorationOptions;
 }
 
-class ViewModelDecoration implements IViewModelDecoration {
+class ViewModelDecoration {
 	id: string;
 	ownerId: number;
-	range: editorCommon.IRange;
+	range: Range;
 	options: editorCommon.IModelDecorationOptions;
 	modelRange: editorCommon.IRange;
 
-	constructor(source:IViewModelDecorationSource, range:editorCommon.IRange) {
+	constructor(source:IViewModelDecorationSource, range:Range) {
 		this.id = source.id;
 		this.options = source.options;
 		this.ownerId = source.ownerId;
@@ -44,9 +41,9 @@ export class ViewModelDecorations implements IDisposable {
 	private editorId:number;
 	private configuration:editorCommon.IConfiguration;
 	private converter:IModelRangeToViewRangeConverter;
-	private decorations:IViewModelDecoration[];
+	private decorations:ViewModelDecoration[];
 
-	private _cachedModelDecorationsResolver:editorCommon.IViewModelDecorationsResolver;
+	private _cachedModelDecorationsResolver:IDecorationsViewportData;
 	private _cachedModelDecorationsResolverStartLineNumber:number;
 	private _cachedModelDecorationsResolverEndLineNumber:number;
 
@@ -80,7 +77,7 @@ export class ViewModelDecorations implements IDisposable {
 			i:number,
 			len:number,
 			theirDecoration:editorCommon.IModelDecoration,
-			myDecoration:IViewModelDecoration;
+			myDecoration:ViewModelDecoration;
 
 		this.decorations = [];
 		for (i = 0, len = decorations.length; i < len; i++) {
@@ -124,7 +121,7 @@ export class ViewModelDecorations implements IDisposable {
 
 		// Interpret changed decorations
 		var usedMap:{[id:string]:boolean;} = {},
-			myDecoration:IViewModelDecoration;
+			myDecoration:ViewModelDecoration;
 
 		for (i = 0, len = this.decorations.length; i < len; i++) {
 			myDecoration = this.decorations[i];
@@ -137,17 +134,12 @@ export class ViewModelDecorations implements IDisposable {
 				myDecoration.modelRange = theirDecoration.range;
 				myDecoration.range = this.converter.convertModelRangeToViewRange(theirDecoration.range, theirDecoration.options.isWholeLine);
 //				console.log(theirDecoration.range.toString() + '--->' + myDecoration.range.toString());
-
-				if (myDecoration.options.inlineClassName) {
-					inlineDecorationsChanged = true;
-				}
+				inlineDecorationsChanged = inlineDecorationsChanged || hasInlineChanges(myDecoration);
 				somethingChanged = true;
 			}
 
 			if (removedMap.hasOwnProperty(myDecoration.id)) {
-				if (this.decorations[i].options.inlineClassName) {
-					inlineDecorationsChanged = true;
-				}
+				inlineDecorationsChanged = inlineDecorationsChanged || hasInlineChanges(this.decorations[i]);
 				this.decorations.splice(i, 1);
 				len--;
 				i--;
@@ -156,17 +148,16 @@ export class ViewModelDecorations implements IDisposable {
 		}
 
 		// Interpret new decorations
-		var id:string;
-		for (id in addedOrChangedMap) {
-			if (!usedMap.hasOwnProperty(id) && addedOrChangedMap.hasOwnProperty(id)) {
+		let keys = Object.keys(addedOrChangedMap);
+		for (let i = 0, len = keys.length; i < len; i++) {
+			let id = keys[i];
+			if (!usedMap.hasOwnProperty(id)) {
 				theirDecoration = addedOrChangedMap[id];
 
 				myDecoration = new ViewModelDecoration(theirDecoration, this.converter.convertModelRangeToViewRange(theirDecoration.range, theirDecoration.options.isWholeLine));
 //				console.log(theirDecoration.range.toString() + '--->' + myDecoration.range.toString());
 				this.decorations.push(myDecoration);
-				if (myDecoration.options.inlineClassName) {
-					inlineDecorationsChanged = true;
-				}
+				inlineDecorationsChanged = inlineDecorationsChanged || hasInlineChanges(myDecoration);
 				somethingChanged = true;
 			}
 		}
@@ -183,9 +174,9 @@ export class ViewModelDecorations implements IDisposable {
 
 	public onLineMappingChanged(emit:(eventType:string, payload:any)=>void): void {
 		var decorations = this.decorations,
-			d:IViewModelDecoration,
+			d:ViewModelDecoration,
 			i:number,
-			newRange:editorCommon.IEditorRange,
+			newRange:Range,
 			somethingChanged:boolean = false,
 			inlineDecorationsChanged = false,
 			len:number;
@@ -193,7 +184,7 @@ export class ViewModelDecorations implements IDisposable {
 		for (i = 0, len = decorations.length; i < len; i++) {
 			d = decorations[i];
 			newRange = this.converter.convertModelRangeToViewRange(d.modelRange, d.options.isWholeLine);
-			if (!inlineDecorationsChanged && d.options.inlineClassName && !Range.equalsRange(newRange, d.range)) {
+			if (!inlineDecorationsChanged && hasInlineChanges(d) && !Range.equalsRange(newRange, d.range)) {
 				inlineDecorationsChanged = true;
 			}
 			if (!somethingChanged && !Range.equalsRange(newRange, d.range)) {
@@ -216,27 +207,27 @@ export class ViewModelDecorations implements IDisposable {
 		return this.decorations;
 	}
 
-	public getDecorationsResolver(startLineNumber: number, endLineNumber: number): editorCommon.IViewModelDecorationsResolver {
+	public getDecorationsViewportData(startLineNumber: number, endLineNumber: number): IDecorationsViewportData {
 		var cacheIsValid = true;
 		cacheIsValid = cacheIsValid && (this._cachedModelDecorationsResolver !== null);
 		cacheIsValid = cacheIsValid && (this._cachedModelDecorationsResolverStartLineNumber === startLineNumber);
 		cacheIsValid = cacheIsValid && (this._cachedModelDecorationsResolverEndLineNumber === endLineNumber);
 		if (!cacheIsValid) {
-			this._cachedModelDecorationsResolver = this._createDecorationsResolver(startLineNumber, endLineNumber);
+			this._cachedModelDecorationsResolver = this._getDecorationsViewportData(startLineNumber, endLineNumber);
 			this._cachedModelDecorationsResolverStartLineNumber = startLineNumber;
 			this._cachedModelDecorationsResolverEndLineNumber = endLineNumber;
 		}
 		return this._cachedModelDecorationsResolver;
 	}
 
-	private _createDecorationsResolver(startLineNumber: number, endLineNumber: number): editorCommon.IViewModelDecorationsResolver {
+	private _getDecorationsViewportData(startLineNumber: number, endLineNumber: number): IDecorationsViewportData {
 		var decorationsInViewport: editorCommon.IModelDecoration[] = [],
-			inlineDecorations: editorCommon.IModelDecoration[][] = [],
+			inlineDecorations: InlineDecoration[][] = [],
 			j: number,
 			intersectedStartLineNumber: number,
 			intersectedEndLineNumber: number,
 			decorations = this.decorations,
-			d:editorCommon.IModelDecoration,
+			d:ViewModelDecoration,
 			r:editorCommon.IRange,
 			i:number,
 			len:number;
@@ -259,26 +250,40 @@ export class ViewModelDecorations implements IDisposable {
 			decorationsInViewport.push(d);
 
 			if (d.options.inlineClassName) {
+				let inlineDecoration = new InlineDecoration(d.range, d.options.inlineClassName);
 				intersectedStartLineNumber = Math.max(startLineNumber, r.startLineNumber);
 				intersectedEndLineNumber = Math.min(endLineNumber, r.endLineNumber);
 				for (j = intersectedStartLineNumber; j <= intersectedEndLineNumber; j++) {
-					inlineDecorations[j - startLineNumber].push(d);
+					inlineDecorations[j - startLineNumber].push(inlineDecoration);
+				}
+			}
+			if (d.options.beforeContentClassName && r.startLineNumber >= startLineNumber) {
+				// TODO: What happens if the startLineNumber and startColumn is at the end of a line?
+				let inlineDecoration = new InlineDecoration(
+					new Range(r.startLineNumber, r.startColumn, r.startLineNumber, r.startColumn + 1),
+					d.options.beforeContentClassName
+				);
+				inlineDecorations[r.startLineNumber - startLineNumber].push(inlineDecoration);
+			}
+			if (d.options.afterContentClassName && r.endLineNumber <= endLineNumber) {
+				if (r.endColumn > 1) {
+					let inlineDecoration = new InlineDecoration(
+						new Range(r.endLineNumber, r.endColumn - 1, r.endLineNumber, r.endColumn),
+						d.options.afterContentClassName
+					);
+					inlineDecorations[r.endLineNumber - startLineNumber].push(inlineDecoration);
 				}
 			}
 		}
 
 		return {
-			getDecorations: () => {
-				return decorationsInViewport;
-			},
-			getInlineDecorations: (lineNumber:number) => {
-				if (lineNumber < startLineNumber || lineNumber > endLineNumber) {
-					throw new Error('Unexpected line outside the ViewModelDecorationsResolver preconfigured range');
-				}
-				return inlineDecorations[lineNumber - startLineNumber];
-			}
+			decorations: decorationsInViewport,
+			inlineDecorations: inlineDecorations
 		};
 	}
+}
 
-
+function hasInlineChanges(decoration:editorCommon.IModelDecoration) : boolean {
+	let options = decoration.options;
+	return !!(options.inlineClassName || options.beforeContentClassName || options.afterContentClassName);
 }

@@ -17,19 +17,35 @@ import {IStat, IContent, ConfigurationService as CommonConfigurationService} fro
 import {IWorkspaceContextService} from 'vs/workbench/services/workspace/common/contextService';
 import {OptionsChangeEvent, EventType} from 'vs/workbench/common/events';
 import {IEventService} from 'vs/platform/event/common/event';
-import {IConfigurationService} from 'vs/platform/configuration/common/configuration';
-
-import fs = require('fs');
+import {IDisposable} from 'vs/base/common/lifecycle';
+import {readFile, writeFile} from 'vs/base/node/pfs';
+import {JSONPath} from 'vs/base/common/json';
+import {applyEdits} from 'vs/base/common/jsonFormatter';
+import {setProperty} from 'vs/base/common/jsonEdit';
 
 export class ConfigurationService extends CommonConfigurationService {
 
-	public serviceId = IConfigurationService;
+	public _serviceBrand: any;
+
 	protected contextService: IWorkspaceContextService;
-	private toDispose: Function;
+	private toDispose: IDisposable;
 
 	constructor(contextService: IWorkspaceContextService, eventService: IEventService) {
 		super(contextService, eventService);
+
 		this.registerListeners();
+	}
+
+	protected registerListeners(): void {
+		super.registerListeners();
+
+		this.toDispose = this.eventService.addListener2(EventType.WORKBENCH_OPTIONS_CHANGED, (e) => this.onOptionsChanged(e));
+	}
+
+	private onOptionsChanged(e: OptionsChangeEvent): void {
+		if (e.key === 'globalSettings') {
+			this.handleConfigurationChange();
+		}
 	}
 
 	protected resolveContents(resources: uri[]): TPromise<IContent[]> {
@@ -43,18 +59,7 @@ export class ConfigurationService extends CommonConfigurationService {
 	}
 
 	protected resolveContent(resource: uri): TPromise<IContent> {
-		return new TPromise<IContent>((c, e) => {
-			fs.readFile(resource.fsPath, (error, contents) => {
-				if (error) {
-					e(error);
-				} else {
-					c({
-						resource: resource,
-						value: contents.toString()
-					});
-				}
-			});
-		});
+		return readFile(resource.fsPath).then(contents => ({resource, value: contents.toString()}));
 	}
 
 	protected resolveStat(resource: uri): TPromise<IStat> {
@@ -88,16 +93,6 @@ export class ConfigurationService extends CommonConfigurationService {
 		});
 	}
 
-	private registerListeners(): void {
-		this.toDispose = this.eventService.addListener(EventType.WORKBENCH_OPTIONS_CHANGED, (e) => this.onOptionsChanged(e));
-	}
-
-	private onOptionsChanged(e: OptionsChangeEvent): void {
-		if (e.key === 'globalSettings') {
-			this.reloadAndEmit();
-		}
-	}
-
 	protected loadWorkspaceConfiguration(section?: string): TPromise<{ [relativeWorkspacePath: string]: IConfigFile }> {
 
 		// Return early if we don't have a workspace
@@ -105,25 +100,37 @@ export class ConfigurationService extends CommonConfigurationService {
 			return TPromise.as({});
 		}
 
-		// Migrate as needed (.settings => .vscode)
 		return super.loadWorkspaceConfiguration(section);
 	}
 
-	protected loadGlobalConfiguration(): TPromise<{ contents: any; parseErrors?: string[]; }> {
-		return super.loadGlobalConfiguration().then((defaults) => {
-			let globalSettings = this.contextService.getOptions().globalSettings;
-			return {
-				contents: objects.mixin(
-					objects.clone(defaults.contents),	// target: default values (but don't modify!)
-					globalSettings.settings,			// source: global configured values
-					true								// overwrite
-				),
-				parseErrors: globalSettings.settingsParseErrors
-			};
+	protected loadGlobalConfiguration(): { contents: any; parseErrors?: string[]; } {
+		const defaults = super.loadGlobalConfiguration();
+		const globalSettings = this.contextService.getOptions().globalSettings;
+
+		return {
+			contents: objects.mixin(
+				objects.clone(defaults.contents),	// target: default values (but don't modify!)
+				globalSettings.settings,			// source: global configured values
+				true								// overwrite
+			),
+			parseErrors: globalSettings.settingsParseErrors
+		};
+	}
+
+	public setUserConfiguration(key: any, value: any) : Thenable<void> {
+		let appSettingsPath = this.contextService.getConfiguration().env.appSettingsPath;
+		return readFile(appSettingsPath, 'utf8').then(content => {
+			let {tabSize, insertSpaces} = this.getConfiguration<{ tabSize: number; insertSpaces: boolean }>('editor');
+			let path: JSONPath = typeof key === 'string' ? (<string> key).split('.') : <JSONPath> key;
+			let edits = setProperty(content, path, value, {insertSpaces, tabSize, eol: '\n'});
+			content = applyEdits(content, edits);
+			return writeFile(appSettingsPath, content, 'utf8');
 		});
 	}
 
 	public dispose(): void {
-		this.toDispose();
+		super.dispose();
+
+		this.toDispose.dispose();
 	}
 }

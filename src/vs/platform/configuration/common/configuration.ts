@@ -3,21 +3,27 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import {createDecorator, ServiceIdentifier} from 'vs/platform/instantiation/common/instantiation';
-import {IEventEmitter} from 'vs/base/common/eventEmitter';
+import {createDecorator} from 'vs/platform/instantiation/common/instantiation';
 import Event from 'vs/base/common/event';
-import winjs = require('vs/base/common/winjs.base');
+import {TPromise} from 'vs/base/common/winjs.base';
+import {JSONPath} from 'vs/base/common/json';
 
 export const IConfigurationService = createDecorator<IConfigurationService>('configurationService');
 
-export interface IConfigurationService extends IEventEmitter {
-	serviceId: ServiceIdentifier<any>;
+export interface IConfigurationService {
+	_serviceBrand: any;
 
 	/**
 	 * Fetches the appropriate section of the configuration JSON file.
 	 * This will be an object keyed off the section name.
 	 */
-	loadConfiguration(section?: string): winjs.TPromise<any>;
+	getConfiguration<T>(section?: string): T;
+
+	/**
+	 * Similar to #getConfiguration() but ensures that the latest configuration
+	 * from disk is fetched.
+	 */
+	loadConfiguration<T>(section?: string): TPromise<T>;
 
 	/**
 	 * Returns iff the workspace has configuration or not.
@@ -27,29 +33,20 @@ export interface IConfigurationService extends IEventEmitter {
 	/**
 	 * Event that fires when the configuration changes.
 	 */
-	onDidUpdateConfiguration: Event<{ config: any }>;
-}
-
-export class ConfigurationServiceEventTypes {
+	onDidUpdateConfiguration: Event<IConfigurationServiceEvent>;
 
 	/**
-	 * This event happens after configuration is updated either programmatically
-	 * or through a file change. It will include a IConfigurationServiceEvent
-	 * object that includes the new config and which section was updated
-	 * or null if entire config was updated.
-	 *
-	 * Subscribers can use the provided updated configuration
-	 * rather than re-pulling for updates
+	 * Sets a user configuration. An the setting does not yet exist in the settings, it will be
+	 * added.
 	 */
-	public static UPDATED = 'update';
+	setUserConfiguration(key: string | JSONPath, value: any) : Thenable<void>;
 }
 
 export interface IConfigurationServiceEvent {
-	section?: string;
 	config: any;
 }
 
-export function extractSetting(config: any, settingPath: string): any {
+export function getConfigurationValue<T>(config: any, settingPath: string, defaultValue?: T): T {
 	function accessSetting(config: any, path: string[]): any {
 		let current = config;
 		for (let i = 0; i < path.length; i++) {
@@ -58,9 +55,12 @@ export function extractSetting(config: any, settingPath: string): any {
 				return undefined;
 			}
 		}
-		return current;
+		return <T> current;
 	}
 
 	let path = settingPath.split('.');
-	return accessSetting(config, path);
+	let result = accessSetting(config, path);
+	return typeof result === 'undefined'
+		? defaultValue
+		: result;
 }

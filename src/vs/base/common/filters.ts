@@ -5,6 +5,7 @@
 'use strict';
 
 import strings = require('vs/base/common/strings');
+import {LinkedMap} from 'vs/base/common/map';
 
 export interface IFilter {
 	// Returns null if word doesn't match.
@@ -25,7 +26,7 @@ export interface IMatch {
  * filter.
  */
 export function or(...filter: IFilter[]): IFilter {
-	return function(word: string, wordToMatchAgainst: string): IMatch[] {
+	return function (word: string, wordToMatchAgainst: string): IMatch[] {
 		for (let i = 0, len = filter.length; i < len; i++) {
 			let match = filter[i](word, wordToMatchAgainst);
 			if (match) {
@@ -42,7 +43,7 @@ export function or(...filter: IFilter[]): IFilter {
  * returned if *all* filters match.
  */
 export function and(...filter: IFilter[]): IFilter {
-	return function(word: string, wordToMatchAgainst: string): IMatch[] {
+	return function (word: string, wordToMatchAgainst: string): IMatch[] {
 		let result: IMatch[] = [];
 		for (let i = 0, len = filter.length; i < len; i++) {
 			let match = filter[i](word, wordToMatchAgainst);
@@ -61,7 +62,7 @@ export let matchesStrictPrefix: IFilter = (word: string, wordToMatchAgainst: str
 export let matchesPrefix: IFilter = (word: string, wordToMatchAgainst: string): IMatch[] => { return _matchesPrefix(true, word, wordToMatchAgainst); };
 
 function _matchesPrefix(ignoreCase: boolean, word: string, wordToMatchAgainst: string): IMatch[] {
-	if (wordToMatchAgainst.length === 0 || wordToMatchAgainst.length < word.length) {
+	if (!wordToMatchAgainst || wordToMatchAgainst.length === 0 || wordToMatchAgainst.length < word.length) {
 		return null;
 	}
 	if (ignoreCase) {
@@ -80,7 +81,6 @@ function _matchesPrefix(ignoreCase: boolean, word: string, wordToMatchAgainst: s
 
 export function matchesContiguousSubString(word: string, wordToMatchAgainst: string): IMatch[] {
 	let index = wordToMatchAgainst.toLowerCase().indexOf(word.toLowerCase());
-
 	if (index === -1) {
 		return null;
 	}
@@ -220,7 +220,7 @@ function isCamelCasePattern(word: string): boolean {
 }
 
 export function matchesCamelCase(word: string, camelCaseWord: string): IMatch[] {
-	if (camelCaseWord.length === 0) {
+	if (!camelCaseWord || camelCaseWord.length === 0) {
 		return null;
 	}
 
@@ -242,6 +242,54 @@ export function matchesCamelCase(word: string, camelCaseWord: string): IMatch[] 
 	return result;
 }
 
+// Matches beginning of words supporting non-ASCII languages
+// E.g. "gp" or "g p" will match "Git: Pull"
+// Useful in cases where the target is words (e.g. command labels)
+
+export function matchesWords(word: string, target: string): IMatch[] {
+	if (!target || target.length === 0) {
+		return null;
+	}
+
+	let result: IMatch[] = null;
+	let i = 0;
+
+	while (i < target.length && (result = _matchesWords(word.toLowerCase(), target, 0, i)) === null) {
+		i = nextWord(target, i + 1);
+	}
+
+	return result;
+}
+
+function _matchesWords(word: string, target: string, i: number, j: number): IMatch[] {
+	if (i === word.length) {
+		return [];
+	} else if (j === target.length) {
+		return null;
+	} else if (word[i] !== target[j].toLowerCase()) {
+		return null;
+	} else {
+		let result = null;
+		let nextWordIndex = j + 1;
+		result = _matchesWords(word, target, i + 1, j + 1);
+		while (!result && (nextWordIndex = nextWord(target, nextWordIndex)) < target.length) {
+			result = _matchesWords(word, target, i + 1, nextWordIndex);
+			nextWordIndex++;
+		}
+		return result === null ? null : join({ start: j, end: j + 1 }, result);
+	}
+}
+
+function nextWord(word: string, start: number): number {
+	for (let i = start; i < word.length; i++) {
+		let c = word.charCodeAt(i);
+		if (isWhitespace(c) || (i > 0 && isWhitespace(word.charCodeAt(i - 1)))) {
+			return i;
+		}
+	}
+	return word.length;
+}
+
 // Fuzzy
 
 export enum SubstringMatching {
@@ -249,17 +297,20 @@ export enum SubstringMatching {
 	Separate
 }
 
-const fuzzyContiguousFilter = or(matchesPrefix, matchesCamelCase, matchesContiguousSubString);
+export const fuzzyContiguousFilter = or(matchesPrefix, matchesCamelCase, matchesContiguousSubString);
 const fuzzySeparateFilter = or(matchesPrefix, matchesCamelCase, matchesSubString);
-const fuzzyRegExpCache: { [key: string]: RegExp; } = {};
+const fuzzyRegExpCache = new LinkedMap<RegExp>(10000); // bounded to 10000 elements
 
 export function matchesFuzzy(word: string, wordToMatchAgainst: string, enableSeparateSubstringMatching = false): IMatch[] {
+	if (typeof word !== 'string' || typeof wordToMatchAgainst !== 'string') {
+		return null; // return early for invalid input
+	}
 
 	// Form RegExp for wildcard matches
-	let regexp = fuzzyRegExpCache[word];
+	let regexp = fuzzyRegExpCache.get(word);
 	if (!regexp) {
 		regexp = new RegExp(strings.convertSimple2RegExpPattern(word), 'i');
-		fuzzyRegExpCache[word] = regexp;
+		fuzzyRegExpCache.set(word, regexp);
 	}
 
 	// RegExp Filter

@@ -11,51 +11,19 @@ import gracefulFs = require('graceful-fs');
 gracefulFs.gracefulify(fs);
 
 import {PPromise} from 'vs/base/common/winjs.base';
-import glob = require('vs/base/common/glob');
-import {IProgress, ILineMatch, IPatternInfo} from 'vs/platform/search/common/search';
+import {MAX_FILE_SIZE} from 'vs/platform/files/common/files';
 import {FileWalker, Engine as FileSearchEngine} from 'vs/workbench/services/search/node/fileSearch';
 import {Engine as TextSearchEngine} from 'vs/workbench/services/search/node/textSearch';
-
-export interface IRawSearch {
-	rootFolders: string[];
-	extraFiles?: string[];
-	filePattern?: string;
-	excludePattern?: glob.IExpression;
-	includePattern?: glob.IExpression;
-	contentPattern?: IPatternInfo;
-	maxResults?: number;
-	fileEncoding?: string;
-}
-
-export interface IRawSearchService {
-	fileSearch(search: IRawSearch): PPromise<ISerializedSearchComplete, ISerializedSearchProgressItem>;
-	textSearch(search: IRawSearch): PPromise<ISerializedSearchComplete, ISerializedSearchProgressItem>;
-}
-
-export interface ISearchEngine {
-	search: (onResult: (match: ISerializedFileMatch) => void, onProgress: (progress: IProgress) => void, done: (error: Error, isLimitHit: boolean) => void) => void;
-	cancel: () => void;
-}
-
-export interface ISerializedSearchComplete {
-	limitHit: boolean;
-}
-
-export interface ISerializedFileMatch {
-	path?: string;
-	lineMatches?: ILineMatch[];
-}
-
-export interface ISerializedSearchProgressItem extends ISerializedFileMatch, IProgress {
-	// Marker interface to indicate the possible values for progress calls from the engine
-}
+import {IRawSearchService, IRawSearch, ISerializedSearchProgressItem, ISerializedSearchComplete, ISearchEngine} from './search';
 
 export class SearchService implements IRawSearchService {
+
+	private static BATCH_SIZE = 500;
 
 	public fileSearch(config: IRawSearch): PPromise<ISerializedSearchComplete, ISerializedSearchProgressItem> {
 		let engine = new FileSearchEngine(config);
 
-		return this.doSearch(engine);
+		return this.doSearch(engine, SearchService.BATCH_SIZE);
 	}
 
 	public textSearch(config: IRawSearch): PPromise<ISerializedSearchComplete, ISerializedSearchProgressItem> {
@@ -64,27 +32,38 @@ export class SearchService implements IRawSearchService {
 			extraFiles: config.extraFiles,
 			includePattern: config.includePattern,
 			excludePattern: config.excludePattern,
-			filePattern: config.filePattern
+			filePattern: config.filePattern,
+			maxFilesize: MAX_FILE_SIZE
 		}));
 
-		return this.doSearch(engine);
+		return this.doSearch(engine, SearchService.BATCH_SIZE);
 	}
 
-	private doSearch(engine: ISearchEngine): PPromise<ISerializedSearchComplete, ISerializedSearchProgressItem> {
+	public doSearch(engine: ISearchEngine, batchSize?: number): PPromise<ISerializedSearchComplete, ISerializedSearchProgressItem> {
 		return new PPromise<ISerializedSearchComplete, ISerializedSearchProgressItem>((c, e, p) => {
+			let batch = [];
 			engine.search((match) => {
 				if (match) {
-					p(match);
+					if (batchSize) {
+						batch.push(match);
+						if (batchSize > 0 && batch.length >= batchSize) {
+							p(batch);
+							batch = [];
+						}
+					} else {
+						p(match);
+					}
 				}
 			}, (progress) => {
 				p(progress);
-			}, (error, isLimitHit) => {
+			}, (error, stats) => {
+				if (batch.length) {
+					p(batch);
+				}
 				if (error) {
 					e(error);
 				} else {
-					c({
-						limitHit: isLimitHit
-					});
+					c(stats);
 				}
 			});
 		}, () => engine.cancel());

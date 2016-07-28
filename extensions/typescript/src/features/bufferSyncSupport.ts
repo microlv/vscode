@@ -2,7 +2,6 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-
 'use strict';
 
 import { workspace, TextDocument, TextDocumentChangeEvent, TextDocumentContentChangeEvent, Disposable } from 'vscode';
@@ -67,29 +66,59 @@ class SyncedBuffer {
 	}
 }
 
+export interface Diagnostics {
+	delete(file: string): void;
+}
+
 export default class BufferSyncSupport {
 
 	private client: ITypescriptServiceClient;
 
-	private modeId: string;
+	private _validate: boolean;
+	private modeIds: Map<boolean>;
+	private extensions: Map<boolean>;
+	private diagnostics: Diagnostics;
 	private disposables: Disposable[] = [];
-	private syncedBuffers: { [key: string]: SyncedBuffer };
+	private syncedBuffers: Map<SyncedBuffer>;
+
+	private projectValidationRequested: boolean;
 
 	private pendingDiagnostics: { [key: string]: number; };
 	private diagnosticDelayer: Delayer<any>;
 
-	constructor(client: ITypescriptServiceClient, modeId: string) {
+	constructor(client: ITypescriptServiceClient, modeIds: string[], diagnostics: Diagnostics, extensions: Map<boolean>, validate: boolean = true) {
 		this.client = client;
-		this.modeId = modeId;
+		this.modeIds = Object.create(null);
+		modeIds.forEach(modeId => this.modeIds[modeId] = true);
+		this.diagnostics = diagnostics;
+		this.extensions = extensions;
+		this._validate = validate;
+
+		this.projectValidationRequested = false;
 
 		this.pendingDiagnostics = Object.create(null);
 		this.diagnosticDelayer = new Delayer<any>(100);
 
 		this.syncedBuffers = Object.create(null);
-		workspace.onDidOpenTextDocument(this.onDidAddDocument, this, this.disposables);
-		workspace.onDidCloseTextDocument(this.onDidRemoveDocument, this, this.disposables);
-		workspace.onDidChangeTextDocument(this.onDidChangeDocument, this, this.disposables);
-		workspace.textDocuments.forEach(this.onDidAddDocument, this);
+	}
+
+	public listen(): void {
+		workspace.onDidOpenTextDocument(this.onDidOpenTextDocument, this, this.disposables);
+		workspace.onDidCloseTextDocument(this.onDidCloseTextDocument, this, this.disposables);
+		workspace.onDidChangeTextDocument(this.onDidChangeTextDocument, this, this.disposables);
+		workspace.textDocuments.forEach(this.onDidOpenTextDocument, this);
+	}
+
+	public get validate(): boolean {
+		return this._validate;
+	}
+
+	public set validate(value: boolean) {
+		this._validate = value;
+	}
+
+	public handles(file: string): boolean {
+		return !!this.syncedBuffers[file];
 	}
 
 	public reOpenDocuments(): void {
@@ -104,8 +133,8 @@ export default class BufferSyncSupport {
 		}
 	}
 
-	private onDidAddDocument(document: TextDocument): void {
-		if (document.languageId !== this.modeId) {
+	private onDidOpenTextDocument(document: TextDocument): void {
+		if (!this.modeIds[document.languageId]) {
 			return;
 		}
 		if (document.isUntitled) {
@@ -122,7 +151,7 @@ export default class BufferSyncSupport {
 		this.requestDiagnostic(filepath);
 	}
 
-	private onDidRemoveDocument(document: TextDocument): void {
+	private onDidCloseTextDocument(document: TextDocument): void {
 		let filepath: string = this.client.asAbsolutePath(document.uri);
 		if (!filepath) {
 			return;
@@ -131,11 +160,12 @@ export default class BufferSyncSupport {
 		if (!syncedBuffer) {
 			return;
 		}
+		this.diagnostics.delete(filepath);
 		delete this.syncedBuffers[filepath];
 		syncedBuffer.close();
 	}
 
-	private onDidChangeDocument(e: TextDocumentChangeEvent): void {
+	private onDidChangeTextDocument(e: TextDocumentChangeEvent): void {
 		let filepath: string = this.client.asAbsolutePath(e.document.uri);
 		if (!filepath) {
 			return;
@@ -148,6 +178,9 @@ export default class BufferSyncSupport {
 	}
 
 	public requestAllDiagnostics() {
+		if (!this._validate) {
+			return;
+		}
 		Object.keys(this.syncedBuffers).forEach(filePath => this.pendingDiagnostics[filePath] = Date.now());
 		this.diagnosticDelayer.trigger(() => {
 			this.sendPendingDiagnostics();
@@ -155,6 +188,10 @@ export default class BufferSyncSupport {
 	}
 
 	public requestDiagnostic(file: string): void {
+		if (!this._validate || this.client.experimentalAutoBuild) {
+			return;
+		}
+
 		this.pendingDiagnostics[file] = Date.now();
 		this.diagnosticDelayer.trigger(() => {
 			this.sendPendingDiagnostics();
@@ -162,6 +199,9 @@ export default class BufferSyncSupport {
 	}
 
 	private sendPendingDiagnostics(): void {
+		if (!this._validate) {
+			return;
+		}
 		let files = Object.keys(this.pendingDiagnostics).map((key) => {
 			return {
 				file: key,

@@ -4,45 +4,37 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import 'vs/languages/html/common/html.contribution';
 import assert = require('assert');
 import mm = require('vs/editor/common/model/mirrorModel');
 import htmlWorker = require('vs/languages/html/common/htmlWorker');
 import URI from 'vs/base/common/uri';
 import ResourceService = require('vs/editor/common/services/resourceServiceImpl');
-import MarkerService = require('vs/platform/markers/common/markerService');
 import Modes = require('vs/editor/common/modes');
 import WinJS = require('vs/base/common/winjs.base');
-import modesUtil = require('vs/editor/test/common/modesUtil');
-import servicesUtil2 = require('vs/editor/test/common/servicesTestUtils');
-import {NULL_THREAD_SERVICE} from 'vs/platform/test/common/nullThreadService';
-import {DefaultEndOfLine} from 'vs/editor/common/editorCommon';
+import {HTMLMode} from 'vs/languages/html/common/html';
+import {MockModeService} from 'vs/editor/test/common/mocks/mockModeService';
 
 suite('HTML - worker', () => {
 
 	var mode: Modes.IMode;
 
-	suiteSetup((done) => {
-		modesUtil.load('html').then(_mode => {
-			mode = _mode;
-			done();
-		});
-	});
+	(function() {
+		mode = new HTMLMode<htmlWorker.HTMLWorker>(
+			{ id: 'html' },
+			null,
+			new MockModeService(),
+			null,
+			null
+		);
+	})();
 
 	var mockHtmlWorkerEnv = function (url: URI, content: string): { worker: htmlWorker.HTMLWorker; model: mm.MirrorModel; } {
 		var resourceService = new ResourceService.ResourceService();
 
-		var model = mm.createMirrorModelFromString(null, 0, content, DefaultEndOfLine.LF, mode, url);
+		var model = mm.createTestMirrorModelFromString(content, mode, url);
 		resourceService.insert(url, model);
 
-		var markerService = new MarkerService.MainProcessMarkerService(NULL_THREAD_SERVICE);
-
-		let services = servicesUtil2.createMockEditorWorkerServices({
-			resourceService: resourceService,
-			markerService: markerService
-		});
-
-		var worker = new htmlWorker.HTMLWorker(mode.getId(), [], services.resourceService, services.markerService, services.contextService);
+		var worker = new htmlWorker.HTMLWorker(mode.getId(), resourceService);
 
 		return { worker: worker, model: model };
 	};
@@ -56,7 +48,7 @@ suite('HTML - worker', () => {
 		var env = mockHtmlWorkerEnv(url, content);
 
 		var position = env.model.getPositionFromOffset(idx);
-		return env.worker.suggest(url, position).then(result => result[0]);
+		return env.worker.provideCompletionItems(url, position).then(result => result[0]);
 	};
 
 	var assertSuggestion = function(completion: Modes.ISuggestResult, label: string, type?: string, codeSnippet?: string) {
@@ -152,12 +144,14 @@ suite('HTML - worker', () => {
 				assertSuggestion(completion, 'color', null, '"color"');
 				assertSuggestion(completion, 'checkbox', null, '"checkbox"');
 			}),
-
 			testSuggestionsFor('<input src="c" type="color|" ').then((completion) => {
 				assert.equal(completion.currentWord, 'color');
 				assertSuggestion(completion, 'color', null, 'color');
 			}),
-
+			testSuggestionsFor('<input src="c" type=color| ').then((completion) => {
+				assert.equal(completion.currentWord, 'color');
+				assertSuggestion(completion, 'color', null, 'color');
+			}),
 			testSuggestionsFor('<div dir=|></div>').then((completion) => {
 				assert.equal(completion.currentWord, '');
 				assertSuggestion(completion, 'ltr', null, '"ltr"');
@@ -316,6 +310,67 @@ suite('HTML - worker', () => {
 				assert.equal(completion.currentWord, '');
 				assertSuggestion(completion, 'ng-model');
 				assertSuggestion(completion, 'data-ng-model');
+			})
+		]).done(() => testDone(), (errors:any[]) => {
+			testDone(errors.reduce((e1, e2) => e1 || e2));
+		});
+	});
+
+	test('Intellisense Ionic', function(testDone): any {
+		WinJS.Promise.join([
+			// Try some Ionic tags
+			testSuggestionsFor('<|').then((completion) => {
+				assert.equal(completion.currentWord, '');
+				assertSuggestion(completion, 'ion-checkbox');
+				assertSuggestion(completion, 'ion-content');
+				assertSuggestion(completion, 'ion-nav-title');
+			}),
+			testSuggestionsFor('<ion-re|').then((completion) => {
+				assert.equal(completion.currentWord, 'ion-re');
+				assertSuggestion(completion, 'ion-refresher');
+				assertSuggestion(completion, 'ion-reorder-button');
+			}),
+			// Try some global attributes (1 with value suggestions, 1 without value suggestions, 1 void)
+			testSuggestionsFor('<ion-checkbox |').then((completion) => {
+				assert.equal(completion.currentWord, '');
+				assertSuggestion(completion, 'force-refresh-images');
+				assertSuggestion(completion, 'collection-repeat');
+				assertSuggestion(completion, 'menu-close');
+			}),
+			// Try some tag-specific attributes (1 with value suggestions, 1 void)
+			testSuggestionsFor('<ion-footer-bar |').then((completion) => {
+				assert.equal(completion.currentWord, '');
+				assertSuggestion(completion, 'align-title');
+				assertSuggestion(completion, 'keyboard-attach');
+			}),
+			// Try the extended attributes of an existing HTML 5 tag
+			testSuggestionsFor('<a |').then((completion) => {
+				assert.equal(completion.currentWord, '');
+				assertSuggestion(completion, 'nav-direction');
+				assertSuggestion(completion, 'nav-transition');
+				assertSuggestion(completion, 'href');
+				assertSuggestion(completion, 'hreflang');
+			}),
+			// Try value suggestion for a tag-specific attribute
+			testSuggestionsFor('<ion-side-menu side="|').then((completion) => {
+				assert.equal(completion.currentWord, '');
+				assertSuggestion(completion, 'left');
+				assertSuggestion(completion, 'primary');
+				assertSuggestion(completion, 'right');
+				assertSuggestion(completion, 'secondary');
+			}),
+			// Try a value suggestion for a global attribute
+			testSuggestionsFor('<img force-refresh-images="|').then((completion) => {
+				assert.equal(completion.currentWord, '');
+				assertSuggestion(completion, 'false');
+				assertSuggestion(completion, 'true');
+			}),
+			// Try a value suggestion for an extended attribute of an existing HTML 5 tag
+			testSuggestionsFor('<a nav-transition="|').then((completion) => {
+				assert.equal(completion.currentWord, '');
+				assertSuggestion(completion, 'android');
+				assertSuggestion(completion, 'ios');
+				assertSuggestion(completion, 'none');
 			})
 		]).done(() => testDone(), (errors:any[]) => {
 			testDone(errors.reduce((e1, e2) => e1 || e2));

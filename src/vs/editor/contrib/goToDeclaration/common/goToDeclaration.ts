@@ -7,22 +7,22 @@
 
 import {onUnexpectedError} from 'vs/base/common/errors';
 import {TPromise} from 'vs/base/common/winjs.base';
-import {IModel, IPosition} from 'vs/editor/common/editorCommon';
+import {IReadOnlyModel} from 'vs/editor/common/editorCommon';
 import {CommonEditorRegistry} from 'vs/editor/common/editorCommonExtensions';
-import {IDeclarationSupport} from 'vs/editor/common/modes';
-import {IReference} from 'vs/editor/common/modes';
-import LanguageFeatureRegistry from 'vs/editor/common/modes/languageFeatureRegistry';
+import {DefinitionProviderRegistry} from 'vs/editor/common/modes';
+import {Location} from 'vs/editor/common/modes';
+import {asWinJsPromise} from 'vs/base/common/async';
+import {Position} from 'vs/editor/common/core/position';
 
-export const DeclarationRegistry = new LanguageFeatureRegistry<IDeclarationSupport>('declarationSupport');
+export function getDeclarationsAtPosition(model: IReadOnlyModel, position: Position): TPromise<Location[]> {
 
-export function getDeclarationsAtPosition(model: IModel, position: IPosition): TPromise<IReference[]> {
-
-	const resource = model.getAssociatedResource();
-	const provider = DeclarationRegistry.ordered(model);
+	const provider = DefinitionProviderRegistry.ordered(model);
 
 	// get results
 	const promises = provider.map((provider, idx) => {
-		return provider.findDeclaration(resource, position).then(result => {
+		return asWinJsPromise((token) => {
+			return provider.provideDefinition(model, position, token);
+		}).then(result => {
 			return result;
 		}, err => {
 			onUnexpectedError(err);
@@ -30,7 +30,7 @@ export function getDeclarationsAtPosition(model: IModel, position: IPosition): T
 	});
 
 	return TPromise.join(promises).then(allReferences => {
-		let result: IReference[] = [];
+		let result: Location[] = [];
 		for (let references of allReferences) {
 			if (Array.isArray(references)) {
 				result.push(...references);

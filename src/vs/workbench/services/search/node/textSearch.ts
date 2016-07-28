@@ -8,14 +8,13 @@
 import strings = require('vs/base/common/strings');
 
 import fs = require('fs');
-import iconv = require('iconv-lite');
 
 import baseMime = require('vs/base/common/mime');
 import {ILineMatch, IProgress} from 'vs/platform/search/common/search';
 import {detectMimeAndEncodingFromBuffer} from 'vs/base/node/mime';
 import {FileWalker} from 'vs/workbench/services/search/node/fileSearch';
-import {UTF16le, UTF16be, UTF8} from 'vs/base/node/encoding';
-import {ISerializedFileMatch, IRawSearch, ISearchEngine} from 'vs/workbench/services/search/node/rawSearchService';
+import {UTF16le, UTF16be, UTF8, UTF8_with_bom, encodingExists, decode} from 'vs/base/node/encoding';
+import {ISerializedFileMatch, ISerializedSearchComplete, IRawSearch, ISearchEngine} from './search';
 
 interface ReadLinesOptions {
 	bufferLength: number;
@@ -23,6 +22,9 @@ interface ReadLinesOptions {
 }
 
 export class Engine implements ISearchEngine {
+
+	private static PROGRESS_FLUSH_CHUNK_SIZE = 50; // optimization: number of files to process before emitting progress event
+
 	private rootFolders: string[];
 	private extraFiles: string[];
 	private maxResults: number;
@@ -32,6 +34,7 @@ export class Engine implements ISearchEngine {
 	private isDone: boolean;
 	private total: number;
 	private worked: number;
+	private progressed: number;
 	private walkerError: Error;
 	private walkerIsDone: boolean;
 	private fileEncoding: string;
@@ -46,8 +49,9 @@ export class Engine implements ISearchEngine {
 		this.limitReached = false;
 		this.maxResults = config.maxResults;
 		this.worked = 0;
+		this.progressed = 0;
 		this.total = 0;
-		this.fileEncoding = iconv.encodingExists(config.fileEncoding) ? config.fileEncoding : UTF8;
+		this.fileEncoding = encodingExists(config.fileEncoding) ? config.fileEncoding : UTF8;
 	}
 
 	public cancel(): void {
@@ -55,35 +59,46 @@ export class Engine implements ISearchEngine {
 		this.walker.cancel();
 	}
 
-	public search(onResult: (match: ISerializedFileMatch) => void, onProgress: (progress: IProgress) => void, done: (error: Error, isLimitHit: boolean) => void): void {
+	public search(onResult: (match: ISerializedFileMatch) => void, onProgress: (progress: IProgress) => void, done: (error: Error, complete: ISerializedSearchComplete) => void): void {
 		let resultCounter = 0;
+
+		let progress = () => {
+			this.progressed++;
+			if (this.progressed % Engine.PROGRESS_FLUSH_CHUNK_SIZE === 0) {
+				onProgress({ total: this.total, worked: this.worked }); // buffer progress in chunks to reduce pressure
+			}
+		};
 
 		let unwind = (processed: number) => {
 			this.worked += processed;
 
 			// Emit progress() unless we got canceled or hit the limit
 			if (processed && !this.isDone && !this.isCanceled && !this.limitReached) {
-				onProgress({ total: this.total, worked: this.worked });
+				progress();
 			}
 
 			// Emit done()
 			if (this.worked === this.total && this.walkerIsDone && !this.isDone) {
 				this.isDone = true;
-				done(this.walkerError, this.limitReached);
+				done(this.walkerError, {
+					limitHit: this.limitReached,
+					stats: this.walker.getStats()
+				});
 			}
 		};
 
 		// Walk over the file system
-		this.walker.walk(this.rootFolders, this.extraFiles, (result) => {
-			this.total++;
+		this.walker.walk(this.rootFolders, this.extraFiles, (result, size) => {
+			size = size ||  1;
+			this.total += size;
 
 			// If the result is empty or we have reached the limit or we are canceled, ignore it
 			if (this.limitReached || this.isCanceled) {
-				return unwind(1);
+				return unwind(size);
 			}
 
 			// Indicate progress to the outside
-			onProgress({ total: this.total, worked: this.worked });
+			progress();
 
 			let fileMatch: FileMatch = null;
 
@@ -92,7 +107,7 @@ export class Engine implements ISearchEngine {
 					onResult(fileMatch.serialize());
 				}
 
-				return unwind(1);
+				return unwind(size);
 			};
 
 			let perLineCallback = (line: string, lineNumber: number) => {
@@ -149,16 +164,16 @@ export class Engine implements ISearchEngine {
 
 			const outer = this;
 
-			function decode(buffer: NodeBuffer): string {
-				if (options.encoding === UTF8) {
+			function decodeBuffer(buffer: NodeBuffer): string {
+				if (options.encoding === UTF8 || options.encoding === UTF8_with_bom) {
 					return buffer.toString(); // much faster to use built in toString() when encoding is default
 				}
 
-				return iconv.decode(buffer, options.encoding);
+				return decode(buffer, options.encoding);
 			}
 
 			function lineFinished(offset: number): void {
-				line += decode(buffer.slice(pos, i + offset));
+				line += decodeBuffer(buffer.slice(pos, i + offset));
 				perLineCallback(line, lineNumber);
 				line = '';
 				lineNumber++;
@@ -228,7 +243,7 @@ export class Engine implements ISearchEngine {
 						}
 					}
 
-					line += decode(buffer.slice(pos, bytesRead));
+					line += decodeBuffer(buffer.slice(pos, bytesRead));
 
 					readFile(false /* isFirstRead */, clb); // Continue reading
 				});

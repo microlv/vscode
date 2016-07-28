@@ -6,7 +6,6 @@
 
 import * as assert from 'assert';
 import {EditOperation} from 'vs/editor/common/core/editOperation';
-import {DefaultEndOfLine} from 'vs/editor/common/editorCommon';
 import {Position} from 'vs/editor/common/core/position';
 import {Range} from 'vs/editor/common/core/range';
 import {Model} from 'vs/editor/common/model/model';
@@ -62,7 +61,7 @@ suite('Editor Model - Model Modes 1', () => {
 			LINE3 + '\n' +
 			LINE4 + '\r\n' +
 			LINE5;
-		thisModel = new Model(text, DefaultEndOfLine.LF, thisHighlighter);
+		thisModel = Model.createFromString(text, undefined, thisHighlighter);
 	});
 
 	teardown(() => {
@@ -180,7 +179,7 @@ suite('Editor Model - Model Modes 2', () => {
 			'Line3' + '\n' +
 			'Line4' + '\r\n' +
 			'Line5';
-		thisModel = new Model(text, DefaultEndOfLine.LF, thisHighlighter);
+		thisModel = Model.createFromString(text, undefined, thisHighlighter);
 	});
 
 	teardown(() => {
@@ -260,7 +259,7 @@ suite('Editor Model - Token Iterator', () => {
 			'foobarfoobar' + '\r\n' +
 			'foobarfoobar' + '\r\n' +
 			'foobarfoobar' + '\r\n';
-		thisModel = new Model(text, DefaultEndOfLine.LF, nmode);
+		thisModel = Model.createFromString(text, undefined, nmode);
 	});
 
 	teardown(() => {

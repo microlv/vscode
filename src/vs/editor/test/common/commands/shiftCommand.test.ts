@@ -8,10 +8,11 @@ import * as assert from 'assert';
 import {ShiftCommand} from 'vs/editor/common/commands/shiftCommand';
 import {Selection} from 'vs/editor/common/core/selection';
 import {IIdentifiedSingleEditOperation} from 'vs/editor/common/editorCommon';
-import {IMode, IRichEditSupport, IndentAction} from 'vs/editor/common/modes';
-import {RichEditSupport} from 'vs/editor/common/modes/supports/richEditSupport';
+import {IndentAction} from 'vs/editor/common/modes';
+import {LanguageConfigurationRegistry} from 'vs/editor/common/modes/languageConfigurationRegistry';
 import {createSingleEditOp, getEditOperation, testCommand} from 'vs/editor/test/common/commands/commandTestUtils';
 import {withEditorModel} from 'vs/editor/test/common/editorTestUtils';
+import {MockMode} from 'vs/editor/test/common/mocks/mockMode';
 
 function testShiftCommand(lines: string[], selection: Selection, expectedLines: string[], expectedSelection: Selection): void {
 	testCommand(lines, null, selection, (sel) => new ShiftCommand(sel, {
@@ -29,12 +30,11 @@ function testUnshiftCommand(lines: string[], selection: Selection, expectedLines
 	}), expectedLines, expectedSelection);
 }
 
-class DocBlockCommentMode implements IMode {
-
-	public richEditSupport: IRichEditSupport;
+class DocBlockCommentMode extends MockMode {
 
 	constructor() {
-		this.richEditSupport = new RichEditSupport(this.getId(), null, {
+		super();
+		LanguageConfigurationRegistry.register(this.getId(), {
 			brackets: [
 				['(', ')'],
 				['{', '}'],
@@ -62,19 +62,15 @@ class DocBlockCommentMode implements IMode {
 					// e.g.  */|
 					beforeText: /^(\t|(\ \ ))*\ \*\/\s*$/,
 					action: { indentAction: IndentAction.None, removeText: 1 }
+				},
+				{
+					// e.g.  *-----*/|
+					beforeText: /^(\t|(\ \ ))*\ \*[^/]*\*\/\s*$/,
+					action: { indentAction: IndentAction.None, removeText: 1 }
 				}
 			]
 		});
 	}
-
-	public getId(): string {
-		return 'docBlockCommentMode';
-	}
-
-	public toSimplifiedMode(): IMode {
-		return this;
-	}
-
 }
 
 function testShiftCommandInDocBlockCommentMode(lines: string[], selection: Selection, expectedLines: string[], expectedSelection: Selection): void {

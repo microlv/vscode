@@ -7,26 +7,35 @@
 
 import 'vs/css!./currentLineHighlight';
 import * as editorCommon from 'vs/editor/common/editorCommon';
-import {ViewEventHandler} from 'vs/editor/common/viewModel/viewEventHandler';
-import {IDynamicViewOverlay, ILayoutProvider, IRenderingContext, IViewContext} from 'vs/editor/browser/editorBrowser';
+import {DynamicViewOverlay} from 'vs/editor/browser/view/dynamicViewOverlay';
+import {ViewContext} from 'vs/editor/common/view/viewContext';
+import {IRenderingContext} from 'vs/editor/common/view/renderingContext';
+import {ILayoutProvider} from 'vs/editor/browser/viewLayout/layoutProvider';
 
-export class CurrentLineHighlightOverlay extends ViewEventHandler implements IDynamicViewOverlay {
-	private _context:IViewContext;
+export class CurrentLineHighlightOverlay extends DynamicViewOverlay {
+	private _context:ViewContext;
+	private _lineHeight:number;
+	private _readOnly:boolean;
 	private _layoutProvider:ILayoutProvider;
 	private _selectionIsEmpty:boolean;
 	private _primaryCursorIsInEditableRange:boolean;
 	private _primaryCursorLineNumber:number;
 	private _scrollWidth:number;
+	private _contentWidth:number;
 
-	constructor(context:IViewContext, layoutProvider:ILayoutProvider) {
+	constructor(context:ViewContext, layoutProvider:ILayoutProvider) {
 		super();
 		this._context = context;
+		this._lineHeight = this._context.configuration.editor.lineHeight;
+		this._readOnly = this._context.configuration.editor.readOnly;
+
 		this._layoutProvider = layoutProvider;
 
 		this._selectionIsEmpty = true;
 		this._primaryCursorIsInEditableRange = true;
 		this._primaryCursorLineNumber = 1;
 		this._scrollWidth = this._layoutProvider.getScrollWidth();
+		this._contentWidth = this._context.configuration.editor.layoutInfo.contentWidth;
 
 		this._context.addEventHandler(this);
 	}
@@ -72,53 +81,54 @@ export class CurrentLineHighlightOverlay extends ViewEventHandler implements IDy
 		return false;
 	}
 	public onConfigurationChanged(e:editorCommon.IConfigurationChangedEvent): boolean {
+		if (e.lineHeight) {
+			this._lineHeight = this._context.configuration.editor.lineHeight;
+		}
+		if (e.readOnly) {
+			this._readOnly = this._context.configuration.editor.readOnly;
+		}
+		if (e.layoutInfo) {
+			this._contentWidth = this._context.configuration.editor.layoutInfo.contentWidth;
+		}
 		return true;
 	}
-	public onLayoutChanged(layoutInfo:editorCommon.IEditorLayoutInfo): boolean {
+	public onLayoutChanged(layoutInfo:editorCommon.EditorLayoutInfo): boolean {
 		return true;
 	}
 	public onScrollChanged(e:editorCommon.IScrollEvent): boolean {
-		return true;
+		this._scrollWidth = e.scrollWidth;
+		return e.scrollWidthChanged;
 	}
 	public onZonesChanged(): boolean {
 		return true;
 	}
-	public onScrollWidthChanged(scrollWidth:number): boolean {
-		if (this._scrollWidth !== scrollWidth) {
-			this._scrollWidth = scrollWidth;
-			return true;
-		}
-		return false;
-	}
 	// --- end event handlers
 
-	public shouldCallRender2(ctx:IRenderingContext): boolean {
-		if (!this.shouldRender) {
-			return false;
+	public prepareRender(ctx:IRenderingContext): void {
+		if (!this.shouldRender()) {
+			throw new Error('I did not ask to render!');
 		}
-		this.shouldRender = false;
 		this._scrollWidth = ctx.scrollWidth;
-		return true;
 	}
 
-	public render2(lineNumber:number): string[] {
+	public render(startLineNumber:number, lineNumber:number): string {
 		if (lineNumber === this._primaryCursorLineNumber) {
 			if (this._shouldShowCurrentLine()) {
-				return [
-					'<div class="current-line" style="width:',
-					String(this._scrollWidth),
-					'px; height:',
-					String(this._context.configuration.editor.lineHeight),
-					'px;"></div>'
-				];
+				return (
+					'<div class="current-line" style="width:'
+					+ String(Math.max(this._scrollWidth, this._contentWidth))
+					+ 'px; height:'
+					+ String(this._lineHeight)
+					+ 'px;"></div>'
+				);
 			} else {
-				return null;
+				return '';
 			}
 		}
-		return null;
+		return '';
 	}
 
 	private _shouldShowCurrentLine(): boolean {
-		return this._selectionIsEmpty && this._primaryCursorIsInEditableRange && !this._context.configuration.editor.readOnly;
+		return this._selectionIsEmpty && this._primaryCursorIsInEditableRange && !this._readOnly;
 	}
 }

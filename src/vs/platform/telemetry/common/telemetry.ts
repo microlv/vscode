@@ -4,13 +4,11 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import Lifecycle = require('vs/base/common/lifecycle');
-import Timer = require('vs/base/common/timer');
-import {createDecorator, ServiceIdentifier, IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
+import {TPromise} from 'vs/base/common/winjs.base';
+import {ITimerEvent, nullEvent} from 'vs/base/common/timer';
+import {createDecorator} from 'vs/platform/instantiation/common/instantiation';
 
-export const ID = 'telemetryService';
-
-export const ITelemetryService = createDecorator<ITelemetryService>(ID);
+export const ITelemetryService = createDecorator<ITelemetryService>('telemetryService');
 
 export interface ITelemetryInfo {
 	sessionId: string;
@@ -18,61 +16,55 @@ export interface ITelemetryInfo {
 	instanceId: string;
 }
 
-export interface ITelemetryService extends Lifecycle.IDisposable {
-	serviceId: ServiceIdentifier<any>;
+export interface ITelemetryService {
+
+	_serviceBrand: any;
 
 	/**
 	 * Sends a telemetry event that has been privacy approved.
 	 * Do not call this unless you have been given approval.
 	 */
-	publicLog(eventName: string, data?: any): void;
+	publicLog(eventName: string, data?: any): TPromise<void>;
 
 	/**
 	 * Starts a telemetry timer. Call stop() to send the event.
 	 */
-	start(name: string, data?: any): Timer.ITimerEvent;
+	timedPublicLog(name: string, data?: any): ITimerEvent;
 
-	/**
-	 * Session Id
-	 */
-	getSessionId(): string;
+	getTelemetryInfo(): TPromise<ITelemetryInfo>;
 
-	/**
-	 * a unique Id that is not hardware specific
-	 */
-	getInstanceId(): string;
-
-	/**
-	 * a hardware specific machine Id
-	 */
-	getMachineId(): string;
-
-	getTelemetryInfo(): Thenable<ITelemetryInfo>;
-
-	/**
-	 * Appender operations
-	 */
-	getAppendersCount(): number;
-	getAppenders(): ITelemetryAppender[];
-	addTelemetryAppender(appender: ITelemetryAppender): void;
-	removeTelemetryAppender(appender: ITelemetryAppender): void;
-	setInstantiationService(instantiationService: IInstantiationService): void;
+	isOptedIn: boolean;
 }
 
-export interface ITelemetryAppender extends Lifecycle.IDisposable {
-	log(eventName: string, data?: any): void;
+export const NullTelemetryService: ITelemetryService = {
+	_serviceBrand: undefined,
+	timedPublicLog(name: string, data?: any) {
+		return nullEvent;
+	},
+	publicLog(eventName: string, data?: any) {
+		return TPromise.as<void>(null);
+	},
+	isOptedIn: true,
+	getTelemetryInfo(): TPromise<ITelemetryInfo> {
+		return TPromise.as({
+			instanceId: 'someValue.instanceId',
+			sessionId: 'someValue.sessionId',
+			machineId: 'someValue.machineId'
+		});
+	}
+};
+
+export interface ITelemetryAppender {
+	log(eventName: string, data: any): void;
 }
 
-export interface ITelemetryServiceConfig {
-	enableTelemetry?: boolean;
-	userOptIn?: boolean;
-
-	enableHardIdle?: boolean;
-	enableSoftIdle?: boolean;
-	sessionID?: string;
-	commitHash?: string;
-	version?: string;
+export function combinedAppender(...appenders: ITelemetryAppender[]): ITelemetryAppender {
+	return { log: (e, d) => appenders.forEach(a => a.log(e,d)) };
 }
+
+export const NullAppender: ITelemetryAppender = { log: () => null };
+
+// --- util
 
 export function anonymize(input: string): string {
 	if (!input) {

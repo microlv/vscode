@@ -7,6 +7,7 @@
 import {IDisposable}  from 'vs/base/common/lifecycle';
 import CallbackList from 'vs/base/common/callbackList';
 import {EventEmitter} from 'vs/base/common/eventEmitter';
+import {TPromise} from 'vs/base/common/winjs.base';
 
 /**
  * To an event a function with one or zero parameters
@@ -151,9 +152,65 @@ export function fromEventEmitter<T>(emitter: EventEmitter, eventType: string): E
 	};
 }
 
+export function fromPromise<T>(promise: TPromise<Event<T>>): Event<T> {
+	let toCancel: TPromise<any> = null;
+	let listener: IDisposable = null;
+
+	const emitter = new Emitter<T>({
+		onFirstListenerAdd() {
+			toCancel = promise.then(
+				event => listener = event(e => emitter.fire(e)),
+				() => null
+			);
+		},
+		onLastListenerRemove() {
+			if (toCancel) {
+				toCancel.cancel();
+				toCancel = null;
+			}
+
+			if (listener) {
+				listener.dispose();
+				listener = null;
+			}
+		}
+	});
+
+	return emitter.event;
+}
+
 export function mapEvent<I,O>(event: Event<I>, map: (i:I)=>O): Event<O> {
-	return (listener, thisArgs?, disposables?) =>
-		event(i => listener(map(i)), thisArgs, disposables);
+	return (listener, thisArgs = null, disposables?) => event(i => listener.call(thisArgs, map(i)), null, disposables);
+}
+
+export function filterEvent<T>(event: Event<T>, filter: (e:T)=>boolean): Event<T> {
+	return (listener, thisArgs = null, disposables?) => event(e => filter(e) && listener.call(thisArgs, e), null, disposables);
+}
+
+export function debounceEvent<I, O>(event: Event<I>, merger: (last: O, event: I) => O, delay: number = 100): Event<O> {
+
+	let subscription: IDisposable;
+	let output: O;
+	let handle: number;
+
+	const emitter = new Emitter<O>({
+		onFirstListenerAdd() {
+			subscription = event(cur => {
+				output = merger(output, cur);
+				clearTimeout(handle);
+				handle = setTimeout(() => {
+					let _output = output;
+					output = undefined;
+					emitter.fire(_output);
+				}, delay);
+			});
+		},
+		onLastListenerRemove() {
+			subscription.dispose();
+		}
+	});
+
+	return emitter.event;
 }
 
 enum EventDelayerState {
@@ -183,26 +240,27 @@ enum EventDelayerState {
  */
 export class EventBufferer {
 
-	private state = EventDelayerState.Idle;
-	private buffer: Function[] = [];
+	private buffers: Function[][] = [];
 
 	wrapEvent<T>(event: Event<T>): Event<T> {
 		return (listener, thisArgs?, disposables?) => {
 			return event(i => {
-				if (this.state === EventDelayerState.Idle) {
-					listener(i);
+				const buffer = this.buffers[this.buffers.length - 1];
+
+				if (buffer) {
+					buffer.push(() => listener.call(thisArgs, i));
 				} else {
-					this.buffer.push(() => listener(i));
+					listener.call(thisArgs, i);
 				}
-			}, thisArgs, disposables);
+			}, void 0, disposables);
 		};
 	}
 
 	bufferEvents(fn: () => void): void {
-		this.state = EventDelayerState.Running;
+		const buffer = [];
+		this.buffers.push(buffer);
 		fn();
-		this.buffer.forEach(flush => flush());
-		this.buffer = [];
-		this.state = EventDelayerState.Idle;
+		this.buffers.pop();
+		buffer.forEach(flush => flush());
 	}
 }

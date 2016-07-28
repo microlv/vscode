@@ -11,39 +11,23 @@ import {TPromise} from 'vs/base/common/winjs.base';
 import {Range} from 'vs/editor/common/core/range';
 import {IModel} from 'vs/editor/common/editorCommon';
 import {CommonEditorRegistry} from 'vs/editor/common/editorCommonExtensions';
-import {IOutlineEntry, IOutlineSupport} from 'vs/editor/common/modes';
-import LanguageFeatureRegistry from 'vs/editor/common/modes/languageFeatureRegistry';
+import {SymbolInformation, DocumentSymbolProviderRegistry} from 'vs/editor/common/modes';
 import {IModelService} from 'vs/editor/common/services/modelService';
-
-const OutlineRegistry = new LanguageFeatureRegistry<IOutlineSupport>('outlineSupport');
-
-export {
-	OutlineRegistry,
-	IOutlineEntry,
-	IOutlineSupport
-}
+import {asWinJsPromise} from 'vs/base/common/async';
 
 export interface IOutline {
-	entries: IOutlineEntry[];
-	outlineGroupLabel: { [n: string]: string; };
+	entries: SymbolInformation[];
 }
 
-export function getOutlineEntries(model: IModel): TPromise<IOutline> {
+export function getDocumentSymbols(model: IModel): TPromise<IOutline> {
 
-	let groupLabels: { [n: string]: string } = Object.create(null);
-	let entries: IOutlineEntry[] = [];
+	let entries: SymbolInformation[] = [];
 
-	let promises = OutlineRegistry.all(model).map(support => {
+	let promises = DocumentSymbolProviderRegistry.all(model).map(support => {
 
-		if (support.outlineGroupLabel) {
-			for (var key in support.outlineGroupLabel) {
-				if (Object.prototype.hasOwnProperty.call(support.outlineGroupLabel, key)) {
-					groupLabels[key] = support.outlineGroupLabel[key];
-				}
-			}
-		}
-
-		return support.getOutline(model.getAssociatedResource()).then(result => {
+		return asWinJsPromise((token) => {
+			return support.provideDocumentSymbols(model, token);
+		}).then(result => {
 			if (Array.isArray(result)) {
 				entries.push(...result);
 			}
@@ -53,33 +37,28 @@ export function getOutlineEntries(model: IModel): TPromise<IOutline> {
 	});
 
 	return TPromise.join(promises).then(() => {
-		let flatEntries: IOutlineEntry[] = [];
+		let flatEntries: SymbolInformation[] = [];
 		flatten(flatEntries, entries, '');
 		flatEntries.sort(compareEntriesUsingStart);
 
 		return {
 			entries: flatEntries,
-			outlineGroupLabel: groupLabels
 		};
 	});
 }
 
-function compareEntriesUsingStart(a: IOutlineEntry, b: IOutlineEntry): number{
-	return Range.compareRangesUsingStarts(a.range, b.range);
+function compareEntriesUsingStart(a: SymbolInformation, b: SymbolInformation): number{
+	return Range.compareRangesUsingStarts(Range.lift(a.location.range), Range.lift(b.location.range));
 }
 
-function flatten(bucket: IOutlineEntry[], entries: IOutlineEntry[], overrideContainerLabel: string): void {
+function flatten(bucket: SymbolInformation[], entries: SymbolInformation[], overrideContainerLabel: string): void {
 	for (let entry of entries) {
 		bucket.push({
-			type: entry.type,
-			range: entry.range,
-			label: entry.label,
-			icon: entry.icon,
-			containerLabel: entry.containerLabel || overrideContainerLabel
+			kind: entry.kind,
+			location: entry.location,
+			name: entry.name,
+			containerName: entry.containerName || overrideContainerLabel
 		});
-		if (entry.children) {
-			flatten(bucket, entry.children, entry.label);
-		}
 	}
 }
 
@@ -93,5 +72,5 @@ CommonEditorRegistry.registerLanguageCommand('_executeDocumentSymbolProvider', f
 	if (!model) {
 		throw illegalArgument('resource');
 	}
-	return getOutlineEntries(model);
+	return getDocumentSymbols(model);
 });

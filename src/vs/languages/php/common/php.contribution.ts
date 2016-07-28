@@ -8,9 +8,10 @@ import {ModesRegistry} from 'vs/editor/common/modes/modesRegistry';
 
 ModesRegistry.registerCompatMode({
 	id: 'php',
-	extensions: ['.php', '.phtml', '.ctp'],
+	extensions: ['.php', '.php4', '.php5', '.phtml', '.ctp'],
 	aliases: ['PHP', 'php'],
 	mimetypes: ['application/x-php'],
 	moduleId: 'vs/languages/php/common/php',
-	ctorName: 'PHPMode'
+	ctorName: 'PHPMode',
+	deps: ['text/html']
 });

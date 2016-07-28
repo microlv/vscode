@@ -72,7 +72,7 @@ export class MonarchLexer extends AbstractState {
 			return false;
 		}
 		var otherm: MonarchLexer = <MonarchLexer>other;
-		if ((this.stack.length !== otherm.stack.length) || (this.lexer.name !== otherm.lexer.name) ||
+		if ((this.stack.length !== otherm.stack.length) || (this.lexer.languageId !== otherm.lexer.languageId) ||
 			(this.embeddedMode !== otherm.embeddedMode)) {
 			return false;
 		}
@@ -288,7 +288,7 @@ export class MonarchLexer extends AbstractState {
 			}
 
 			if (action.log && typeof (action.log) === 'string') {
-				monarchCommon.log(this.lexer, this.lexer.displayName + ': ' + monarchCommon.substituteMatches(this.lexer, action.log, matched, matches, state));
+				monarchCommon.log(this.lexer, this.lexer.languageId + ': ' + monarchCommon.substituteMatches(this.lexer, action.log, matched, matches, state));
 			}
 		}
 
@@ -352,13 +352,13 @@ export class MonarchLexer extends AbstractState {
 				var bracket = findBracket(this.lexer, matched);
 				if (!bracket) {
 					monarchCommon.throwError(this.lexer, '@brackets token returned but no bracket defined as: ' + matched);
-					bracket = { token: '', bracketType: modes.Bracket.None };
+					bracket = { token: '', bracketType: monarchCommon.MonarchBracket.None };
 				}
-				return { type: monarchCommon.sanitize(bracket.token + rest), bracket: bracket.bracketType };
+				return { type: monarchCommon.sanitize(bracket.token + rest) };
 			}
 			else {
 				var token = (result === '' ? '' : result + this.lexer.tokenPostfix);
-				return { type: monarchCommon.sanitize(token), bracket: action.bracket };
+				return { type: monarchCommon.sanitize(token) };
 			}
 		}
 	}
@@ -377,10 +377,10 @@ function findBracket(lexer: monarchCommon.ILexer, matched: string) {
 	for (var i = 0; i < brackets.length; i++) {
 		var bracket = brackets[i];
 		if (bracket.open === matched) {
-			return { token: bracket.token, bracketType: modes.Bracket.Open };
+			return { token: bracket.token, bracketType: monarchCommon.MonarchBracket.Open };
 		}
 		else if (bracket.close === matched) {
-			return { token: bracket.token, bracketType: modes.Bracket.Close };
+			return { token: bracket.token, bracketType: monarchCommon.MonarchBracket.Close };
 		}
 	}
 	return null;
@@ -444,5 +444,5 @@ export function createTokenizationSupport(modeService:IModeService, mode:modes.I
 				stateAfterNestedMode: mstate
 			};
 		}
-	}, lexer.usesEmbedded, false);
+	}, lexer.usesEmbedded);
 }

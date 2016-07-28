@@ -7,13 +7,15 @@
 import WinJS = require('vs/base/common/winjs.base');
 import objects = require('vs/base/common/objects');
 import Modes = require('vs/editor/common/modes');
-import {AbstractMode, isDigit, createWordRegExp} from 'vs/editor/common/modes/abstractMode';
+import {CompatMode, isDigit, createWordRegExp} from 'vs/editor/common/modes/abstractMode';
 import {AbstractState} from 'vs/editor/common/modes/abstractState';
 import {IModeService} from 'vs/editor/common/services/modeService';
-import {RichEditSupport} from 'vs/editor/common/modes/supports/richEditSupport';
+import {LanguageConfigurationRegistry, LanguageConfiguration} from 'vs/editor/common/modes/languageConfigurationRegistry';
 import {TokenizationSupport, ILeavingNestedModeData, ITokenizationCustomization} from 'vs/editor/common/modes/supports/tokenizationSupport';
 import {TextualSuggestSupport} from 'vs/editor/common/modes/supports/suggestSupport';
 import {IEditorWorkerService} from 'vs/editor/common/services/editorWorkerService';
+import {IConfigurationService} from 'vs/platform/configuration/common/configuration';
+import {ICompatWorkerService} from 'vs/editor/common/services/compatWorkerService';
 
 
 var brackets = (function() {
@@ -27,19 +29,16 @@ var brackets = (function() {
 	let MAP: {
 		[text:string]:{
 			tokenType: string;
-			bracketType: Modes.Bracket
 		}
 	} = Object.create(null);
 
 	for (let i = 0; i < bracketsSource.length; i++) {
 		let bracket = bracketsSource[i];
 		MAP[bracket.open] = {
-			tokenType: bracket.tokenType,
-			bracketType: Modes.Bracket.Open
+			tokenType: bracket.tokenType
 		};
 		MAP[bracket.close] = {
-			tokenType: bracket.tokenType,
-			bracketType: Modes.Bracket.Close
+			tokenType: bracket.tokenType
 		};
 	}
 
@@ -49,9 +48,6 @@ var brackets = (function() {
 		},
 		tokenTypeFromString: (text:string): string => {
 			return MAP[text].tokenType;
-		},
-		bracketTypeFromString: (text:string): Modes.Bracket => {
-			return MAP[text].bracketType;
 		}
 	};
 })();
@@ -74,7 +70,7 @@ var isKeyword = objects.createKeywordMatcher([
 	'try', 'true', 'use', 'var', 'while', 'xor',
 	'die', 'echo', 'empty', 'exit', 'eval',
 	'include', 'include_once', 'isset', 'list', 'require',
-	'require_once', 'return', 'print', 'unset',
+	'require_once', 'return', 'print', 'unset', 'yield',
 	'__construct'
 ]);
 
@@ -364,7 +360,7 @@ export class PHPStatement extends PHPState {
 			return { nextState: new PHPNumber(this.getMode(), this, stream.next()) };
 		}
 		if (stream.advanceIfString('?>').length) {
-			return { type: 'metatag.php', nextState: this.parent, bracket: Modes.Bracket.Close };
+			return { type: 'metatag.php', nextState: this.parent };
 		}
 
 		var token = stream.nextToken();
@@ -392,7 +388,6 @@ export class PHPStatement extends PHPState {
 			return { nextState: new PHPString(this.getMode(), this, token) };
 		} else if (brackets.stringIsBracket(token)) {
 			return {
-				bracket: brackets.bracketTypeFromString(token),
 				type: brackets.tokenTypeFromString(token)
 			};
 		} else if (isDelimiter(token)) {
@@ -427,8 +422,7 @@ export class PHPPlain extends PHPState {
 		stream.advanceIfString('<?').length || stream.advanceIfString('<%').length) {
 			return {
 				type: 'metatag.php',
-				nextState: new PHPStatement(this.getMode(), new PHPEnterHTMLState(this.getMode(), this.parent)),
-				bracket: Modes.Bracket.Open
+				nextState: new PHPStatement(this.getMode(), new PHPEnterHTMLState(this.getMode(), this.parent))
 			};
 		}
 		stream.next();
@@ -457,54 +451,52 @@ export class PHPEnterHTMLState extends PHPState {
 
 }
 
-export class PHPMode extends AbstractMode implements ITokenizationCustomization {
+export class PHPMode extends CompatMode implements ITokenizationCustomization {
+
+	public static LANG_CONFIG:LanguageConfiguration = {
+		wordPattern: createWordRegExp('$_'),
+
+		comments: {
+			lineComment: '//',
+			blockComment: ['/*', '*/']
+		},
+
+		brackets: [
+			['{', '}'],
+			['[', ']'],
+			['(', ')']
+		],
+
+		autoClosingPairs: [
+			{ open: '{', close: '}', notIn: ['string.php'] },
+			{ open: '[', close: ']', notIn: ['string.php'] },
+			{ open: '(', close: ')', notIn: ['string.php'] },
+			{ open: '"', close: '"', notIn: ['string.php'] },
+			{ open: '\'', close: '\'', notIn: ['string.php'] }
+		]
+	};
 
 	public tokenizationSupport: Modes.ITokenizationSupport;
-	public richEditSupport: Modes.IRichEditSupport;
-	public suggestSupport:Modes.ISuggestSupport;
 
 	private modeService:IModeService;
 
 	constructor(
 		descriptor:Modes.IModeDescriptor,
 		@IModeService modeService: IModeService,
-		@IEditorWorkerService editorWorkerService: IEditorWorkerService
+		@IConfigurationService configurationService: IConfigurationService,
+		@IEditorWorkerService editorWorkerService: IEditorWorkerService,
+		@ICompatWorkerService compatWorkerService: ICompatWorkerService
 	) {
-		super(descriptor.id);
+		super(descriptor.id, compatWorkerService);
 		this.modeService = modeService;
 
-		this.tokenizationSupport = new TokenizationSupport(this, this, true, false);
+		this.tokenizationSupport = new TokenizationSupport(this, this, true);
 
-		this.richEditSupport = new RichEditSupport(this.getId(), null, {
-			wordPattern: createWordRegExp('$_'),
+		LanguageConfigurationRegistry.register(this.getId(), PHPMode.LANG_CONFIG);
 
-			comments: {
-				lineComment: '//',
-				blockComment: ['/*', '*/']
-			},
-
-			brackets: [
-				['{', '}'],
-				['[', ']'],
-				['(', ')']
-			],
-
-			__characterPairSupport: {
-				autoClosingPairs: [
-					{ open: '{', close: '}', notIn: ['string.php'] },
-					{ open: '[', close: ']', notIn: ['string.php'] },
-					{ open: '(', close: ')', notIn: ['string.php'] },
-					{ open: '"', close: '"', notIn: ['string.php'] },
-					{ open: '\'', close: '\'', notIn: ['string.php'] }
-				]
-			}
-		});
-
-		this.suggestSupport = new TextualSuggestSupport(this.getId(), editorWorkerService);
-	}
-
-	public asyncCtor(): WinJS.Promise {
-		return this.modeService.getOrCreateMode('text/html');
+		if (editorWorkerService) {
+			Modes.SuggestRegistry.register(this.getId(), new TextualSuggestSupport(editorWorkerService, configurationService), true);
+		}
 	}
 
 	public getInitialState():Modes.IState {

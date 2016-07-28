@@ -6,14 +6,13 @@
 'use strict';
 
 import assert = require('assert');
-import path = require('path');
 
 import mimeCommon = require('vs/base/common/mime');
 import mime = require('vs/base/node/mime');
 
 suite('Mime', () => {
 
-	test('detectMimesFromFile (JSON saved as PNG)', function(done: () => void) {
+	test('detectMimesFromFile (JSON saved as PNG)', function (done: () => void) {
 		var file = require.toUrl('./fixtures/some.json.png');
 		mime.detectMimesFromFile(file, (error, mimes) => {
 			assert.equal(error, null);
@@ -23,8 +22,8 @@ suite('Mime', () => {
 		});
 	});
 
-	test('detectMimesFromFile (PNG saved as TXT)', function(done: () => void) {
-		mimeCommon.registerTextMimeByFilename('.txt', 'text/plain');
+	test('detectMimesFromFile (PNG saved as TXT)', function (done: () => void) {
+		mimeCommon.registerTextMime({ mime: 'text/plain', extension: '.txt' });
 		var file = require.toUrl('./fixtures/some.png.txt');
 		mime.detectMimesFromFile(file, (error, mimes) => {
 			assert.equal(error, null);
@@ -34,7 +33,7 @@ suite('Mime', () => {
 		});
 	});
 
-	test('detectMimesFromFile (XML saved as PNG)', function(done: () => void) {
+	test('detectMimesFromFile (XML saved as PNG)', function (done: () => void) {
 		var file = require.toUrl('./fixtures/some.xml.png');
 		mime.detectMimesFromFile(file, (error, mimes) => {
 			assert.equal(error, null);
@@ -44,7 +43,7 @@ suite('Mime', () => {
 		});
 	});
 
-	test('detectMimesFromFile (QWOFF saved as TXT)', function(done: () => void) {
+	test('detectMimesFromFile (QWOFF saved as TXT)', function (done: () => void) {
 		var file = require.toUrl('./fixtures/some.qwoff.txt');
 		mime.detectMimesFromFile(file, (error, mimes) => {
 			assert.equal(error, null);
@@ -54,7 +53,7 @@ suite('Mime', () => {
 		});
 	});
 
-	test('detectMimesFromFile (CSS saved as QWOFF)', function(done: () => void) {
+	test('detectMimesFromFile (CSS saved as QWOFF)', function (done: () => void) {
 		var file = require.toUrl('./fixtures/some.css.qwoff');
 		mime.detectMimesFromFile(file, (error, mimes) => {
 			assert.equal(error, null);
@@ -64,7 +63,7 @@ suite('Mime', () => {
 		});
 	});
 
-	test('detectMimesFromFile (PDF)', function(done: () => void) {
+	test('detectMimesFromFile (PDF)', function (done: () => void) {
 		var file = require.toUrl('./fixtures/some.pdf');
 		mime.detectMimesFromFile(file, (error, mimes) => {
 			assert.equal(error, null);

@@ -26,7 +26,7 @@ import fs = require('fs');
 class OpenSnippetsAction extends actions.Action {
 
 	public static ID = 'workbench.action.openSnippets';
-	public static LABEL = nls.localize('openSnippet.label', 'Snippets');
+	public static LABEL = nls.localize('openSnippet.label', "Open User Snippets");
 
 	constructor(
 		id: string,
@@ -39,7 +39,7 @@ class OpenSnippetsAction extends actions.Action {
 	}
 
 	private openFile(filePath: string): void {
-		ipc.send('vscode:windowOpen', [filePath], false /* force new window */); // handled from browser process
+		ipc.send('vscode:windowOpen', [filePath]); // handled from browser process
 	}
 
 	public run(): winjs.Promise {
@@ -123,7 +123,7 @@ function createFile(path: string, content: string): winjs.Promise {
 var preferencesCategory = nls.localize('preferences', "Preferences");
 var workbenchActionsRegistry = <workbenchActionRegistry.IWorkbenchActionRegistry> platform.Registry.as(workbenchActionRegistry.Extensions.WorkbenchActions);
 
-workbenchActionsRegistry.registerWorkbenchAction(new SyncActionDescriptor(OpenSnippetsAction, OpenSnippetsAction.ID, OpenSnippetsAction.LABEL), preferencesCategory);
+workbenchActionsRegistry.registerWorkbenchAction(new SyncActionDescriptor(OpenSnippetsAction, OpenSnippetsAction.ID, OpenSnippetsAction.LABEL), 'Preferences: Snippets', preferencesCategory);
 
 (<workbenchContributions.IWorkbenchContributionsRegistry>platform.Registry.as(workbenchContributions.Extensions.Workbench)).registerWorkbenchContribution(
 	snippetsTracker.SnippetsTracker
@@ -132,7 +132,10 @@ workbenchActionsRegistry.registerWorkbenchAction(new SyncActionDescriptor(OpenSn
 let schemaId = 'vscode://schemas/snippets';
 let schema : IJSONSchema = {
 	'id': schemaId,
-	'default': { '{{snippetName}}': { 'prefix': '{{prefix}}', 'body': '{{snippet}}', 'description': '{{description}}' } },
+	'defaultSnippets': [{
+		'label': nls.localize('snippetSchema.json.default', "Empty snippet"),
+		'body': { '{{snippetName}}': { 'prefix': '{{prefix}}', 'body': '{{snippet}}', 'description': '{{description}}' } }
+	}],
 	'type': 'object',
 	'description': nls.localize('snippetSchema.json', 'User snippet configuration'),
 	'additionalProperties': {
@@ -161,4 +164,3 @@ let schema : IJSONSchema = {
 
 let schemaRegistry = <JSONContributionRegistry.IJSONContributionRegistry>platform.Registry.as(JSONContributionRegistry.Extensions.JSONContribution);
 schemaRegistry.registerSchema(schemaId, schema);
-schemaRegistry.addSchemaFileAssociation('%APP_SETTINGS_HOME%/snippets/*.json', schemaId);

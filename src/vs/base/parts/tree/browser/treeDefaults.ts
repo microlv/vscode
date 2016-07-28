@@ -4,6 +4,9 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
+import nls = require('vs/nls');
+import {TPromise} from 'vs/base/common/winjs.base';
+import {Action} from 'vs/base/common/actions';
 import platform = require('vs/base/common/platform');
 import touch = require('vs/base/browser/touch');
 import errors = require('vs/base/common/errors');
@@ -15,6 +18,7 @@ import {CommonKeybindings} from 'vs/base/common/keyCodes';
 
 export interface ILegacyTemplateData {
 	root: HTMLElement;
+	element: any;
 	previousCleanupFn: _.IElementCallback;
 }
 
@@ -31,24 +35,32 @@ export class LegacyRenderer implements _.IRenderer {
 	public renderTemplate(tree: _.ITree, templateId: string, container: HTMLElement): any {
 		return <ILegacyTemplateData> {
 			root: container,
+			element: null,
 			previousCleanupFn: null
 		};
 	}
 
 	public renderElement(tree: _.ITree, element: any, templateId: string, templateData: ILegacyTemplateData): void {
 		if (templateData.previousCleanupFn) {
-			templateData.previousCleanupFn(tree, element);
+			templateData.previousCleanupFn(tree, templateData.element);
 		}
 
-		while (templateData.root.firstChild) {
+		while (templateData.root && templateData.root.firstChild) {
 			templateData.root.removeChild(templateData.root.firstChild);
 		}
 
+		templateData.element = element;
 		templateData.previousCleanupFn = this.render(tree, element, templateData.root);
 	}
 
 	public disposeTemplate(tree: _.ITree, templateId: string, templateData: any): void {
-		// noop
+		if (templateData.previousCleanupFn) {
+			templateData.previousCleanupFn(tree, templateData.element);
+		}
+
+		templateData.root = null;
+		templateData.element = null;
+		templateData.previousCleanupFn = null;
 	}
 
 	protected render(tree:_.ITree, element:any, container:HTMLElement, previousCleanupFn?: _.IElementCallback):_.IElementCallback {
@@ -310,11 +322,12 @@ export class DefaultController implements _.IController {
 			tree.clearHighlight(payload);
 		} else {
 			var focus = tree.getFocus();
-			tree.collapse(focus).done((didCollapse) => {
+			tree.collapse(focus).then(didCollapse => {
 				if (focus && !didCollapse) {
 					tree.focusParent(payload);
+					return tree.reveal(tree.getFocus());
 				}
-			});
+			}).done(null, errors.onUnexpectedError);
 		}
 		return true;
 	}
@@ -326,7 +339,12 @@ export class DefaultController implements _.IController {
 			tree.clearHighlight(payload);
 		} else {
 			var focus = tree.getFocus();
-			tree.expand(focus).done(null, errors.onUnexpectedError);
+			tree.expand(focus).then(didExpand => {
+				if (focus && !didExpand) {
+					tree.focusFirstChild(payload);
+					return tree.reveal(tree.getFocus());
+				}
+			}).done(null, errors.onUnexpectedError);
 		}
 		return true;
 	}
@@ -414,5 +432,26 @@ export class DefaultAccessibilityProvider implements _.IAccessibilityProvider {
 
 	getAriaLabel(tree: _.ITree, element: any): string {
 		return null;
+	}
+}
+
+export class CollapseAllAction extends Action {
+
+	constructor(private viewer: _.ITree, enabled: boolean) {
+		super('vs.tree.collapse', nls.localize('collapse', "Collapse"), 'monaco-tree-action collapse-all', enabled);
+	}
+
+	public run(context?: any): TPromise<any> {
+		if (this.viewer.getHighlight()) {
+			return TPromise.as(null); // Global action disabled if user is in edit mode from another action
+		}
+
+		this.viewer.collapseAll();
+		this.viewer.clearSelection();
+		this.viewer.clearFocus();
+		this.viewer.DOMFocus();
+		this.viewer.focusFirst();
+
+		return TPromise.as(null);
 	}
 }

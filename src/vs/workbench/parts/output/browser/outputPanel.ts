@@ -20,10 +20,11 @@ import {IMessageService} from 'vs/platform/message/common/message';
 import {EditorInput, EditorOptions} from 'vs/workbench/common/editor';
 import {StringEditor} from 'vs/workbench/browser/parts/editor/stringEditor';
 import {OUTPUT_PANEL_ID, IOutputService} from 'vs/workbench/parts/output/common/output';
-import {OutputEditorInput} from 'vs/workbench/parts/output/common/outputEditorInput';
+import {OutputEditorInput} from 'vs/workbench/parts/output/browser/outputEditorInput';
 import {SwitchOutputAction, SwitchOutputActionItem, ClearOutputAction} from 'vs/workbench/parts/output/browser/outputActions';
 import {IWorkspaceContextService} from 'vs/workbench/services/workspace/common/contextService';
 import {IWorkbenchEditorService} from 'vs/workbench/services/editor/common/editorService';
+import {IThemeService} from 'vs/workbench/services/themes/common/themeService';
 
 export class OutputPanel extends StringEditor {
 
@@ -40,10 +41,11 @@ export class OutputPanel extends StringEditor {
 		@IEventService eventService: IEventService,
 		@IWorkbenchEditorService editorService: IWorkbenchEditorService,
 		@IModeService modeService: IModeService,
+		@IThemeService themeService: IThemeService,
 		@IOutputService private outputService: IOutputService
 	) {
 		super(telemetryService, instantiationService, contextService, storageService,
-			messageService, configurationService, eventService, editorService, modeService);
+			messageService, configurationService, eventService, editorService, modeService, themeService);
 		this.toDispose = [];
 	}
 
@@ -81,9 +83,11 @@ export class OutputPanel extends StringEditor {
 		options.glyphMargin = false;
 		options.lineDecorationsWidth = 20;
 		options.rulers = [];
+		options.folding = false;
+		options.scrollBeyondLastLine = false;
 
-		let channel = this.outputService.getActiveChannel();
-		options.ariaLabel = channel ? nls.localize('outputPanelWithInputAriaLabel', "{0}, Output panel", channel) : nls.localize('outputPanelAriaLabel', "Output panel");
+		const channel = this.outputService.getActiveChannel();
+		options.ariaLabel = channel ? nls.localize('outputPanelWithInputAriaLabel', "{0}, Output panel", channel.label) : nls.localize('outputPanelAriaLabel', "Output panel");
 
 		return options;
 	}
@@ -92,9 +96,10 @@ export class OutputPanel extends StringEditor {
 		return super.setInput(input, options).then(() => this.revealLastLine());
 	}
 
-	public create(parent: Builder): TPromise<void> {
-		return super.create(parent)
-			.then(() => this.setInput(OutputEditorInput.getInstance(this.instantiationService, this.outputService.getActiveChannel()), null));
+	public createEditor(parent: Builder): void {
+		super.createEditor(parent);
+
+		this.setInput(OutputEditorInput.getInstance(this.instantiationService, this.outputService.getActiveChannel()), null);
 	}
 
 	public focus(): void {
@@ -103,7 +108,7 @@ export class OutputPanel extends StringEditor {
 	}
 
 	public dispose(): void {
-		this.toDispose = lifecycle.disposeAll(this.toDispose);
+		this.toDispose = lifecycle.dispose(this.toDispose);
 		super.dispose();
 	}
 }

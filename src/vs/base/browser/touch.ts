@@ -5,7 +5,7 @@
 'use strict';
 
 import arrays = require('vs/base/common/arrays');
-import {IDisposable, disposeAll} from 'vs/base/common/lifecycle';
+import {IDisposable, dispose} from 'vs/base/common/lifecycle';
 import DomUtils = require('vs/base/browser/dom');
 
 export namespace EventType {
@@ -13,6 +13,7 @@ export namespace EventType {
 	export const Change = '-monaco-gesturechange';
 	export const Start = '-monaco-gesturestart';
 	export const End = '-monaco-gesturesend';
+	export const Contextmenu = '-monaco-gesturecontextmenu';
 }
 
 interface TouchData {
@@ -64,7 +65,7 @@ interface TouchEvent extends Event {
 
 export class Gesture implements IDisposable {
 
-	private static HOLD_DELAY = 2000;
+	private static HOLD_DELAY = 700;
 	private static SCROLL_FRICTION = -0.005;
 
 	private targetElement: HTMLElement;
@@ -89,7 +90,7 @@ export class Gesture implements IDisposable {
 	}
 
 	public set target(element: HTMLElement) {
-		this.callOnTarget = disposeAll(this.callOnTarget);
+		this.callOnTarget = dispose(this.callOnTarget);
 
 		this.activeTouches = {};
 
@@ -160,11 +161,21 @@ export class Gesture implements IDisposable {
 			let data = this.activeTouches[touch.identifier],
 				holdTime = Date.now() - data.initialTimeStamp;
 
-			if (holdTime < Gesture.HOLD_DELAY &&
-				Math.abs(data.initialPageX - arrays.tail(data.rollingPageX)) < 30 &&
-				Math.abs(data.initialPageY - arrays.tail(data.rollingPageY)) < 30) {
+			if (holdTime < Gesture.HOLD_DELAY
+				&& Math.abs(data.initialPageX - arrays.tail(data.rollingPageX)) < 30
+				&& Math.abs(data.initialPageY - arrays.tail(data.rollingPageY)) < 30) {
 
 				let evt = Gesture.newGestureEvent(EventType.Tap);
+				evt.initialTarget = data.initialTarget;
+				evt.pageX = arrays.tail(data.rollingPageX);
+				evt.pageY = arrays.tail(data.rollingPageY);
+				this.targetElement.dispatchEvent(evt);
+
+			} else if (holdTime >= Gesture.HOLD_DELAY
+				&& Math.abs(data.initialPageX - arrays.tail(data.rollingPageX)) < 30
+				&& Math.abs(data.initialPageY - arrays.tail(data.rollingPageY)) < 30) {
+
+				let evt = Gesture.newGestureEvent(EventType.Contextmenu);
 				evt.initialTarget = data.initialTarget;
 				evt.pageX = arrays.tail(data.rollingPageX);
 				evt.pageY = arrays.tail(data.rollingPageY);

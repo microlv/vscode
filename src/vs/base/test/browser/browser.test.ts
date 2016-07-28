@@ -19,44 +19,30 @@ suite('Browsers', () => {
 		var isChrome = browser.isChrome;
 		var isSafari = browser.isSafari;
 
-		var canPushState = browser.canPushState();
 		var hasCSSAnimations = browser.hasCSSAnimationSupport();
 
 		var browserCount = 0;
 		if (isOpera) {
 			browserCount++;
-			assert(canPushState);
 		}
 		if (isIE11orEarlier) {
 			browserCount++;
 		}
 		if (isFirefox) {
 			browserCount++;
-			assert(canPushState);
 			assert(hasCSSAnimations);
 		}
 		if (isWebKit) {
 			browserCount++;
-			assert(canPushState);
 			assert(hasCSSAnimations);
 		}
 		if (isChrome) {
 			browserCount++;
-			assert(canPushState);
 			assert(hasCSSAnimations);
 		}
 		if (isSafari) {
 			browserCount++;
-			assert(canPushState);
 			assert(hasCSSAnimations);
-		}
-
-		var canPlayMp3 = browser.canPlayAudio('audio/mpeg');
-		var canPlayMp4 = browser.canPlayVideo('video/mp4');
-
-		if ((isIE11orEarlier || isChrome) && !isOpera) {
-			assert(canPlayMp3);
-			assert(canPlayMp4);
 		}
 	});
 });

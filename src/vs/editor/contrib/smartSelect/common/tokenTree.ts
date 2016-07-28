@@ -6,24 +6,32 @@
 
 import {Position} from 'vs/editor/common/core/position';
 import {Range} from 'vs/editor/common/core/range';
-import {ILineTokens, IModel, IPosition, IRange, IRichEditBracket} from 'vs/editor/common/editorCommon';
-import {Bracket, IModeTransition, IRichEditBrackets} from 'vs/editor/common/modes';
+import {ILineTokens, IModel, IPosition, IRichEditBracket} from 'vs/editor/common/editorCommon';
+import {IRichEditBrackets} from 'vs/editor/common/modes';
 import {ignoreBracketsInToken} from 'vs/editor/common/modes/supports';
 import {BracketsUtils} from 'vs/editor/common/modes/supports/richEditBrackets';
+import {LanguageConfigurationRegistry} from 'vs/editor/common/modes/languageConfigurationRegistry';
+import {ModeTransition} from 'vs/editor/common/core/modeTransition';
+
+export enum TokenTreeBracket {
+	None = 0,
+	Open = 1,
+	Close = -1
+}
 
 export class Node {
 
-	start: IPosition;
+	start: Position;
 
-	end: IPosition;
+	end: Position;
 
-	get range(): IRange {
-		return {
-			startLineNumber: this.start.lineNumber,
-			startColumn: this.start.column,
-			endLineNumber: this.end.lineNumber,
-			endColumn: this.end.column
-		};
+	get range(): Range {
+		return new Range(
+			this.start.lineNumber,
+			this.start.column,
+			this.end.lineNumber,
+			this.end.column
+		);
 	}
 
 	parent: Node;
@@ -33,13 +41,13 @@ export class NodeList extends Node {
 
 	children: Node[];
 
-	get start(): IPosition {
+	get start(): Position {
 		return this.hasChildren
 			? this.children[0].start
 			: this.parent.start;
 	}
 
-	get end(): IPosition {
+	get end(): Position {
 		return this.hasChildren
 			? this.children[this.children.length - 1].end
 			: this.parent.end;
@@ -74,11 +82,11 @@ export class Block extends Node {
 	close: Node;
 	elements: NodeList;
 
-	get start(): IPosition {
+	get start(): Position {
 		return this.open.start;
 	}
 
-	get end(): IPosition {
+	get end(): Position {
 		return this.close.end;
 	}
 
@@ -90,16 +98,16 @@ export class Block extends Node {
 }
 
 interface Token {
-	range: IRange;
-	bracket: Bracket;
+	range: Range;
+	bracket: TokenTreeBracket;
 	type: string;
 	__debugContent?: string;
 }
 
 function newNode(token: Token): Node {
 	var node = new Node();
-	node.start = Position.startPosition(token.range);
-	node.end = Position.endPosition(token.range);
+	node.start = token.range.getStartPosition();
+	node.end = token.range.getEndPosition();
 	return node;
 }
 
@@ -111,7 +119,7 @@ class TokenScanner {
 	private _currentTokenIndex: number;
 	private _currentTokenStart: number;
 	private _currentLineTokens: ILineTokens;
-	private _currentLineModeTransitions: IModeTransition[];
+	private _currentLineModeTransitions: ModeTransition[];
 	private _currentModeIndex: number;
 	private _nextModeStart: number;
 	private _currentModeBrackets: IRichEditBrackets;
@@ -153,11 +161,12 @@ class TokenScanner {
 			this._currentModeIndex++;
 			this._nextModeStart = (this._currentModeIndex + 1 < this._currentLineModeTransitions.length ? this._currentLineModeTransitions[this._currentModeIndex + 1].startIndex : this._currentLineText.length + 1);
 			let mode = (this._currentModeIndex < this._currentLineModeTransitions.length ? this._currentLineModeTransitions[this._currentModeIndex] : null);
-			this._currentModeBrackets = (mode && mode.mode.richEditSupport ? mode.mode.richEditSupport.brackets : null);
+			this._currentModeBrackets = (mode ? LanguageConfigurationRegistry.getBracketsSupport(mode.modeId) : null);
 		}
 
 		let tokenType = this._currentLineTokens.getTokenType(this._currentTokenIndex);
 		let tokenEndIndex = this._currentLineTokens.getTokenEndIndex(this._currentTokenIndex, this._currentLineText.length);
+		let tmpTokenEndIndex = tokenEndIndex;
 
 		let nextBracket: Range = null;
 		if (this._currentModeBrackets && !ignoreBracketsInToken(tokenType)) {
@@ -166,7 +175,7 @@ class TokenScanner {
 
 		if (nextBracket && this._currentTokenStart < nextBracket.startColumn - 1) {
 			// found a bracket, but it is not at the beginning of the token
-			tokenEndIndex = nextBracket.startColumn - 1;
+			tmpTokenEndIndex = nextBracket.startColumn - 1;
 			nextBracket = null;
 		}
 
@@ -181,31 +190,36 @@ class TokenScanner {
 		if (!bracketData) {
 			let token: Token = {
 				type: tokenType,
-				bracket: Bracket.None,
-				range: {
-					startLineNumber: this._currentLineNumber,
-					startColumn: 1 + this._currentTokenStart,
-					endLineNumber: this._currentLineNumber,
-					endColumn: 1 + tokenEndIndex
-				}
+				bracket: TokenTreeBracket.None,
+				range: new Range(
+					this._currentLineNumber,
+					1 + this._currentTokenStart,
+					this._currentLineNumber,
+					1 + tmpTokenEndIndex
+				)
 			};
-			// console.log('TOKEN: <<' + this._currentLineText.substring(this._currentTokenStart, tokenEndIndex) + '>>');
+			// console.log('TOKEN: <<' + this._currentLineText.substring(this._currentTokenStart, tmpTokenEndIndex) + '>>');
 
-			this._currentTokenIndex += 1;
-			this._currentTokenStart = (this._currentTokenIndex < this._currentLineTokens.getTokenCount() ? this._currentLineTokens.getTokenStartIndex(this._currentTokenIndex) : 0);
+			if (tmpTokenEndIndex < tokenEndIndex) {
+				// there is a bracket somewhere in this token...
+				this._currentTokenStart = tmpTokenEndIndex;
+			} else {
+				this._currentTokenIndex += 1;
+				this._currentTokenStart = (this._currentTokenIndex < this._currentLineTokens.getTokenCount() ? this._currentLineTokens.getTokenStartIndex(this._currentTokenIndex) : 0);
+			}
 			return token;
 		}
 
 		let type = `${bracketData.modeId};${bracketData.open};${bracketData.close}`;
 		let token: Token = {
 			type: type,
-			bracket: bracketIsOpen ? Bracket.Open : Bracket.Close,
-			range: {
-				startLineNumber: this._currentLineNumber,
-				startColumn: 1 + this._currentTokenStart,
-				endLineNumber: this._currentLineNumber,
-				endColumn: nextBracket.endColumn
-			}
+			bracket: bracketIsOpen ? TokenTreeBracket.Open : TokenTreeBracket.Close,
+			range: new Range(
+				this._currentLineNumber,
+				1 + this._currentTokenStart,
+				this._currentLineNumber,
+				nextBracket.endColumn
+			)
 		};
 		// console.log('BRACKET: <<' + this._currentLineText.substring(this._currentTokenStart, nextBracket.endColumn - 1) + '>>');
 
@@ -289,7 +303,7 @@ class TokenTreeBuilder {
 	}
 
 	private _token(): Node {
-		if (!this._accept(token => token.bracket === Bracket.None)) {
+		if (!this._accept(token => token.bracket === TokenTreeBracket.None)) {
 			return null;
 		}
 		return newNode(this._currentToken);
@@ -302,7 +316,7 @@ class TokenTreeBuilder {
 
 		accepted = this._accept(token => {
 			bracketType = token.type;
-			return token.bracket === Bracket.Open;
+			return token.bracket === TokenTreeBracket.Open;
 		});
 		if (!accepted) {
 			return null;
@@ -314,7 +328,7 @@ class TokenTreeBuilder {
 			// inside brackets
 		}
 
-		if (!this._accept(token => token.bracket === Bracket.Close && token.type === bracketType)) {
+		if (!this._accept(token => token.bracket === TokenTreeBracket.Close && token.type === bracketType)) {
 			// missing closing bracket -> return just a node list
 			var nodelist = new NodeList();
 			nodelist.append(bracket.open);

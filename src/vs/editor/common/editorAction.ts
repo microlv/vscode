@@ -7,7 +7,6 @@
 import {Action} from 'vs/base/common/actions';
 import * as strings from 'vs/base/common/strings';
 import {TPromise} from 'vs/base/common/winjs.base';
-import {INullService} from 'vs/platform/instantiation/common/instantiation';
 import {Behaviour, IEnablementState, createActionEnablement} from 'vs/editor/common/editorActionEnablement';
 import {IActionDescriptor, IActionEnablement, ICommonCodeEditor, IEditorActionDescriptorData, IEditorContribution} from 'vs/editor/common/editorCommon';
 import {ILineContext} from 'vs/editor/common/modes';
@@ -18,7 +17,6 @@ export class EditorAction extends Action implements IEditorContribution {
 
 	public editor:ICommonCodeEditor;
 
-	private _shouldShowInContextMenu:boolean;
 	private _supportsReadonly:boolean;
 	private _descriptor:IEditorActionDescriptorData;
 	private _enablementState:IEnablementState;
@@ -30,8 +28,6 @@ export class EditorAction extends Action implements IEditorContribution {
 		this.label = descriptor.label || '';
 		this._enablementState = createActionEnablement(editor, condition, this);
 
-		this._shouldShowInContextMenu = !!(condition & Behaviour.ShowInContextMenu);
-
 		this._supportsReadonly = !(condition & Behaviour.Writeable);
 	}
 
@@ -42,17 +38,6 @@ export class EditorAction extends Action implements IEditorContribution {
 	public dispose(): void {
 		this._enablementState.dispose();
 		super.dispose();
-	}
-
-	/**
-	 * A helper to be able to group and sort actions when they are presented visually.
-	 */
-	public getGroupId(): string {
-		return this.id;
-	}
-
-	public shouldShowInContextMenu(): boolean {
-		return this._shouldShowInContextMenu;
 	}
 
 	public getDescriptor(): IEditorActionDescriptorData {
@@ -104,6 +89,10 @@ export class EditorAction extends Action implements IEditorContribution {
 	public getEnablementState(): boolean {
 		return true;
 	}
+
+	public getAlias(): string {
+		return this._descriptor.alias;
+	}
 }
 
 export class HandlerEditorAction extends EditorAction {
@@ -122,11 +111,9 @@ export class HandlerEditorAction extends EditorAction {
 
 export class DynamicEditorAction extends EditorAction {
 
-	private static _transformBehaviour(behaviour:IActionEnablement, contextMenuGroupId: string): Behaviour {
+	private static _transformBehaviour(behaviour:IActionEnablement): Behaviour {
 		var r = 0;
-		if (contextMenuGroupId) {
-			r |= Behaviour.ShowInContextMenu;
-		} else if (behaviour.textFocus) {
+		if (behaviour.textFocus) {
 			// Allowed to set text focus only if not appearing in the context menu
 			r |= Behaviour.TextFocus;
 		}
@@ -146,27 +133,21 @@ export class DynamicEditorAction extends EditorAction {
 		return r;
 	}
 
-	private _contextMenuGroupId: string;
 	private _run: (editor:ICommonCodeEditor)=>void;
 	private _tokensAtPosition:string[];
 	private _wordAtPosition:boolean;
 
-	constructor(descriptor:IActionDescriptor, editor:ICommonCodeEditor, @INullService ns) {
+	constructor(descriptor:IActionDescriptor, editor:ICommonCodeEditor) {
 		var enablement: IActionEnablement = descriptor.enablement || {};
 		super({
 			id: descriptor.id,
 			label: descriptor.label
-		}, editor, DynamicEditorAction._transformBehaviour(enablement, descriptor.contextMenuGroupId));
+		}, editor, DynamicEditorAction._transformBehaviour(enablement));
 
-		this._contextMenuGroupId = descriptor.contextMenuGroupId;
 		this._run = descriptor.run;
 
 		this._tokensAtPosition = enablement.tokensAtPosition;
 		this._wordAtPosition = enablement.wordAtPosition;
-	}
-
-	public getGroupId(): string {
-		return this._contextMenuGroupId;
 	}
 
 	public run(): TPromise<void> {

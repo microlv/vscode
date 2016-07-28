@@ -8,23 +8,27 @@ import 'vs/css!./keybindings';
 import * as nls from 'vs/nls';
 import {IHTMLContentElement} from 'vs/base/common/htmlContent';
 import {KeyCode, Keybinding} from 'vs/base/common/keyCodes';
-import {IDisposable} from 'vs/base/common/lifecycle';
+import {IDisposable, dispose} from 'vs/base/common/lifecycle';
 import Severity from 'vs/base/common/severity';
-import {TPromise} from 'vs/base/common/winjs.base';
+import {isFalsyOrEmpty} from 'vs/base/common/arrays';
 import * as dom from 'vs/base/browser/dom';
 import {IKeyboardEvent, StandardKeyboardEvent} from 'vs/base/browser/keyboardEvent';
 import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
+import {ICommandService, CommandsRegistry, ICommandHandler, ICommandHandlerDescription} from 'vs/platform/commands/common/commands';
 import {KeybindingResolver} from 'vs/platform/keybinding/common/keybindingResolver';
-import {ICommandHandler, IKeybindingContextKey, IKeybindingItem, IKeybindingScopeLocation, IKeybindingService} from 'vs/platform/keybinding/common/keybindingService';
+import {IKeybindingContextKey, IKeybindingItem, IKeybindingScopeLocation, IKeybindingService, SET_CONTEXT_COMMAND_ID, KbExpr} from 'vs/platform/keybinding/common/keybinding';
 import {KeybindingsRegistry} from 'vs/platform/keybinding/common/keybindingsRegistry';
+import {IStatusbarService} from 'vs/platform/statusbar/common/statusbar';
 import {IMessageService} from 'vs/platform/message/common/message';
+import {IConfigurationService} from 'vs/platform/configuration/common/configuration';
+import Event, {Emitter, debounceEvent} from 'vs/base/common/event';
 
 let KEYBINDING_CONTEXT_ATTR = 'data-keybinding-context';
 
 export class KeybindingContext {
-	private _parent: KeybindingContext;
-	private _value: any;
-	private _id: number;
+	protected _parent: KeybindingContext;
+	protected _value: any;
+	protected _id: number;
 
 	constructor(id: number, parent: KeybindingContext) {
 		this._id = id;
@@ -33,22 +37,81 @@ export class KeybindingContext {
 		this._value['_contextId'] = id;
 	}
 
-	public setValue(key: string, value: any): void {
-		//		console.log('SET ' + key + ' = ' + value + ' ON ' + this._id);
-		this._value[key] = value;
-	}
-
-	public removeValue(key: string): void {
-		//		console.log('REMOVE ' + key + ' FROM ' + this._id);
-		delete this._value[key];
-	}
-
-	public getValue(): any {
-		let r = this._parent ? this._parent.getValue() : Object.create(null);
-		for (let key in this._value) {
-			r[key] = this._value[key];
+	public setValue(key: string, value: any): boolean {
+		// console.log('SET ' + key + ' = ' + value + ' ON ' + this._id);
+		if (this._value[key] !== value) {
+			this._value[key] = value;
+			return true;
 		}
-		return r;
+	}
+
+	public removeValue(key: string): boolean {
+		// console.log('REMOVE ' + key + ' FROM ' + this._id);
+		return delete this._value[key];
+	}
+
+	public getValue<T>(key: string): T {
+		const ret = this._value[key];
+		if (typeof ret === 'undefined' && this._parent) {
+			return this._parent.getValue<T>(key);
+		}
+		return ret;
+	}
+
+	public fillInContext(bucket: any): void {
+		if (this._parent) {
+			this._parent.fillInContext(bucket);
+		}
+		for (let key in this._value) {
+			bucket[key] = this._value[key];
+		}
+	}
+}
+
+class ConfigAwareKeybindingContext extends KeybindingContext {
+
+	private _emitter: Emitter<string>;
+	private _subscription: IDisposable;
+
+	constructor(id: number, configurationService: IConfigurationService, emitter:Emitter<string>) {
+		super(id, null);
+
+		this._emitter = emitter;
+		this._subscription = configurationService.onDidUpdateConfiguration(e => this._updateConfigurationContext(e.config));
+		this._updateConfigurationContext(configurationService.getConfiguration());
+	}
+
+	public dispose() {
+		this._subscription.dispose();
+	}
+
+	private _updateConfigurationContext(config: any) {
+
+		// remove old config.xyz values
+		for (let key in this._value) {
+			if (key.indexOf('config.') === 0) {
+				delete this._value[key];
+			}
+		}
+
+		// add new value from config
+		const walk = (obj: any, keys: string[]) => {
+			for (let key in obj) {
+				if (Object.prototype.hasOwnProperty.call(obj, key)) {
+					keys.push(key);
+					let value = obj[key];
+					if (typeof value === 'boolean') {
+						const configKey = keys.join('.');
+						this._value[configKey] = value;
+						this._emitter.fire(configKey);
+					} else if (typeof value === 'object') {
+						walk(value, keys);
+					}
+					keys.pop();
+				}
+			}
+		};
+		walk(config, ['config']);
 	}
 }
 
@@ -62,9 +125,7 @@ class KeybindingContextKey<T> implements IKeybindingContextKey<T> {
 		this._parent = parent;
 		this._key = key;
 		this._defaultValue = defaultValue;
-		if (typeof this._defaultValue !== 'undefined') {
-			this._parent.setContext(this._key, this._defaultValue);
-		}
+		this.reset();
 	}
 
 	public set(value: T): void {
@@ -82,23 +143,35 @@ class KeybindingContextKey<T> implements IKeybindingContextKey<T> {
 }
 
 export abstract class AbstractKeybindingService {
-	public serviceId = IKeybindingService;
+	public _serviceBrand: any;
+
+	protected _onDidChangeContext: Event<string[]>;
+	protected _onDidChangeContextKey: Emitter<string>;
 	protected _myContextId: number;
 	protected _instantiationService: IInstantiationService;
-	protected _messageService: IMessageService;
 
 	constructor(myContextId: number) {
 		this._myContextId = myContextId;
+		this._onDidChangeContextKey = new Emitter<string>();
 		this._instantiationService = null;
-		this._messageService = null;
-	}
-
-	public setMessageService(messageService: IMessageService): void {
-		this._messageService = messageService;
 	}
 
 	public createKey<T>(key: string, defaultValue: T): IKeybindingContextKey<T> {
 		return new KeybindingContextKey(this, key, defaultValue);
+	}
+
+	public get onDidChangeContext(): Event<string[]> {
+		if (!this._onDidChangeContext) {
+			this._onDidChangeContext = debounceEvent(this._onDidChangeContextKey.event, (prev: string[], cur) => {
+				if (!prev) {
+					prev = [cur];
+				} else if (prev.indexOf(cur) < 0) {
+					prev.push(cur);
+				}
+				return prev;
+			}, 25);
+		}
+		return this._onDidChangeContext;
 	}
 
 	public setInstantiationService(instantiationService: IInstantiationService): void {
@@ -106,19 +179,38 @@ export abstract class AbstractKeybindingService {
 	}
 
 	public createScoped(domNode: IKeybindingScopeLocation): IKeybindingService {
-		return new ScopedKeybindingService(this, domNode);
+		return new ScopedKeybindingService(this, this._onDidChangeContextKey, domNode);
+	}
+
+	public contextMatchesRules(rules: KbExpr): boolean {
+		const ctx = Object.create(null);
+		this.getContext(this._myContextId).fillInContext(ctx);
+		const result = KeybindingResolver.contextMatchesRules(ctx, rules);
+		// console.group(rules.serialize() + ' -> ' + result);
+		// rules.keys().forEach(key => { console.log(key, ctx[key]); });
+		// console.groupEnd();
+		return result;
+	}
+
+	public getContextValue<T>(key: string): T {
+		return this.getContext(this._myContextId).getValue<T>(key);
 	}
 
 	public setContext(key: string, value: any): void {
-		this.getContext(this._myContextId).setValue(key, value);
+		if(this.getContext(this._myContextId).setValue(key, value)) {
+			this._onDidChangeContextKey.fire(key);
+		}
 	}
 
 	public removeContext(key: string): void {
-		this.getContext(this._myContextId).removeValue(key);
+		if(this.getContext(this._myContextId).removeValue(key)) {
+			this._onDidChangeContextKey.fire(key);
+		}
 	}
 
 	public abstract getLabelFor(keybinding: Keybinding): string;
 	public abstract getHTMLLabelFor(keybinding: Keybinding): IHTMLContentElement[];
+	public abstract getAriaLabelFor(keybinding: Keybinding): string;
 	public abstract getElectronAcceleratorFor(keybinding: Keybinding): string;
 	public abstract customKeybindingsCount(): number;
 	public abstract getContext(contextId: number): KeybindingContext;
@@ -126,7 +218,7 @@ export abstract class AbstractKeybindingService {
 	public abstract disposeContext(contextId: number): void;
 	public abstract getDefaultKeybindings(): string;
 	public abstract lookupKeybindings(commandId: string): Keybinding[];
-	public abstract executeCommand(commandId: string, args: any): TPromise<any>;
+
 }
 
 export abstract class KeybindingService extends AbstractKeybindingService implements IKeybindingService {
@@ -136,28 +228,38 @@ export abstract class KeybindingService extends AbstractKeybindingService implem
 		[contextId: string]: KeybindingContext;
 	};
 
-	private _toDispose: IDisposable;
+	private _toDispose: IDisposable[] = [];
 	private _cachedResolver: KeybindingResolver;
 	private _firstTimeComputingResolver: boolean;
 	private _currentChord: number;
 	private _currentChordStatusMessage: IDisposable;
+	private _commandService: ICommandService;
+	private _statusService: IStatusbarService;
+	private _messageService: IMessageService;
 
-	constructor() {
+	constructor(commandService: ICommandService, configurationService: IConfigurationService, messageService: IMessageService, statusService?: IStatusbarService) {
 		super(0);
 		this._lastContextId = 0;
 		this._contexts = Object.create(null);
-		this._contexts[String(this._myContextId)] = new KeybindingContext(this._myContextId, null);
+
+		const myContext = new ConfigAwareKeybindingContext(this._myContextId, configurationService, this._onDidChangeContextKey);
+		this._contexts[String(this._myContextId)] = myContext;
+		this._toDispose.push(myContext);
+
 		this._cachedResolver = null;
 		this._firstTimeComputingResolver = true;
 		this._currentChord = 0;
 		this._currentChordStatusMessage = null;
+		this._commandService = commandService;
+		this._statusService = statusService;
+		this._messageService = messageService;
 	}
 
 	protected _beginListening(domNode: HTMLElement): void {
-		this._toDispose = dom.addDisposableListener(domNode, dom.EventType.KEY_DOWN, (e: KeyboardEvent) => {
+		this._toDispose.push(dom.addDisposableListener(domNode, dom.EventType.KEY_DOWN, (e: KeyboardEvent) => {
 			let keyEvent = new StandardKeyboardEvent(e);
 			this._dispatch(keyEvent);
-		});
+		}));
 	}
 
 	private _getResolver(): KeybindingResolver {
@@ -169,10 +271,7 @@ export abstract class KeybindingService extends AbstractKeybindingService implem
 	}
 
 	public dispose(): void {
-		if (this._toDispose) {
-			this._toDispose.dispose();
-			this._toDispose = null;
-		}
+		this._toDispose = dispose(this._toDispose);
 	}
 
 	public getLabelFor(keybinding: Keybinding): string {
@@ -181,6 +280,10 @@ export abstract class KeybindingService extends AbstractKeybindingService implem
 
 	public getHTMLLabelFor(keybinding: Keybinding): IHTMLContentElement[] {
 		return keybinding._toUSHTMLLabel();
+	}
+
+	public getAriaLabelFor(keybinding: Keybinding): string {
+		return keybinding._toUSAriaLabel();
 	}
 
 	public getElectronAcceleratorFor(keybinding: Keybinding): string {
@@ -208,16 +311,31 @@ export abstract class KeybindingService extends AbstractKeybindingService implem
 	}
 
 	private _getAllCommandsAsComment(): string {
-		let boundCommands = this._getResolver().getDefaultBoundCommands();
-		let unboundCommands = Object.keys(KeybindingsRegistry.getCommands()).filter(commandId => commandId[0] !== '_' && !boundCommands[commandId]);
-		unboundCommands.sort();
-		let pretty = unboundCommands.join('\n// - ');
+		const commands = CommandsRegistry.getCommands();
+		const unboundCommands: string[] = [];
+		const boundCommands = this._getResolver().getDefaultBoundCommands();
+
+		for (let id in commands) {
+			if (id[0] === '_' || id.indexOf('vscode.') === 0) { // private command
+				continue;
+			}
+			if (typeof commands[id].description === 'object'
+				&& !isFalsyOrEmpty((<ICommandHandlerDescription>commands[id].description).args)) { // command with args
+				continue;
+			}
+			if (boundCommands[id]) {
+				continue;
+			}
+			unboundCommands.push(id);
+		}
+
+		let pretty = unboundCommands.sort().join('\n// - ');
 
 		return '// ' + nls.localize('unboundCommands', "Here are other available commands: ") + '\n// - ' + pretty;
 	}
 
 	protected _getCommandHandler(commandId: string): ICommandHandler {
-		return KeybindingsRegistry.getCommands()[commandId];
+		return CommandsRegistry.getCommand(commandId).handler;
 	}
 
 	private _dispatch(e: IKeyboardEvent): void {
@@ -226,28 +344,27 @@ export abstract class KeybindingService extends AbstractKeybindingService implem
 			return;
 		}
 
-		let contextId = this._findContextAttr(e.target);
-		let context = this.getContext(contextId);
-		let contextValue = context.getValue();
-		//		console.log(JSON.stringify(contextValue, null, '\t'));
+		let contextValue = Object.create(null);
+		this.getContext(this._findContextAttr(e.target)).fillInContext(contextValue);
+		// console.log(JSON.stringify(contextValue, null, '\t'));
 
 		let resolveResult = this._getResolver().resolve(contextValue, this._currentChord, e.asKeybinding());
 
 		if (resolveResult && resolveResult.enterChord) {
 			e.preventDefault();
 			this._currentChord = resolveResult.enterChord;
-			if (this._messageService) {
+			if (this._statusService) {
 				let firstPartLabel = this.getLabelFor(new Keybinding(this._currentChord));
-				this._currentChordStatusMessage = this._messageService.setStatusMessage(nls.localize('first.chord', "({0}) was pressed. Waiting for second key of chord...", firstPartLabel));
+				this._currentChordStatusMessage = this._statusService.setStatusMessage(nls.localize('first.chord', "({0}) was pressed. Waiting for second key of chord...", firstPartLabel));
 			}
 			return;
 		}
 
-		if (this._messageService && this._currentChord) {
+		if (this._statusService && this._currentChord) {
 			if (!resolveResult || !resolveResult.commandId) {
 				let firstPartLabel = this.getLabelFor(new Keybinding(this._currentChord));
 				let chordPartLabel = this.getLabelFor(new Keybinding(e.asKeybinding()));
-				this._messageService.setStatusMessage(nls.localize('missing.chord', "The key combination ({0}, {1}) is not a command.", firstPartLabel, chordPartLabel), 10 * 1000 /* 10s */);
+				this._statusService.setStatusMessage(nls.localize('missing.chord', "The key combination ({0}, {1}) is not a command.", firstPartLabel, chordPartLabel), 10 * 1000 /* 10s */);
 				e.preventDefault();
 			}
 		}
@@ -262,23 +379,9 @@ export abstract class KeybindingService extends AbstractKeybindingService implem
 				e.preventDefault();
 			}
 			let commandId = resolveResult.commandId.replace(/^\^/, '');
-			this._invokeHandler(commandId, { context: contextValue }).done(undefined, err => {
+			this._commandService.executeCommand(commandId, {}).done(undefined, err => {
 				this._messageService.show(Severity.Warning, err);
 			});
-		}
-	}
-
-	protected _invokeHandler(commandId: string, args: any): TPromise<any> {
-
-		let handler = this._getCommandHandler(commandId);
-		if (!handler) {
-			return TPromise.wrapError(new Error(`No handler found for the command: '${commandId}'. Ensure there is an activation event defined, if you are an extension.`));
-		}
-		try {
-			let result = this._instantiationService.invokeFunction(handler, args);
-			return TPromise.as(result);
-		} catch (err) {
-			return TPromise.wrapError(err);
 		}
 	}
 
@@ -305,28 +408,21 @@ export abstract class KeybindingService extends AbstractKeybindingService implem
 	public disposeContext(contextId: number): void {
 		delete this._contexts[String(contextId)];
 	}
-
-	public executeCommand(commandId: string, args: any = {}): TPromise<any> {
-		if (!args.context) {
-			let contextId = this._findContextAttr(<HTMLElement>document.activeElement);
-			let context = this.getContext(contextId);
-			let contextValue = context.getValue();
-
-			args.context = contextValue;
-		}
-
-		return this._invokeHandler(commandId, args);
-	}
 }
+
+CommandsRegistry.registerCommand(SET_CONTEXT_COMMAND_ID, function (accessor, contextKey: any, contextValue: any) {
+	accessor.get(IKeybindingService).createKey(String(contextKey), contextValue);
+});
 
 class ScopedKeybindingService extends AbstractKeybindingService {
 
 	private _parent: AbstractKeybindingService;
 	private _domNode: IKeybindingScopeLocation;
 
-	constructor(parent: AbstractKeybindingService, domNode: IKeybindingScopeLocation) {
+	constructor(parent: AbstractKeybindingService, emitter: Emitter<string>, domNode: IKeybindingScopeLocation) {
 		super(parent.createChildContext());
 		this._parent = parent;
+		this._onDidChangeContextKey = emitter;
 		this._domNode = domNode;
 		this._domNode.setAttribute(KEYBINDING_CONTEXT_ATTR, String(this._myContextId));
 	}
@@ -336,12 +432,20 @@ class ScopedKeybindingService extends AbstractKeybindingService {
 		this._domNode.removeAttribute(KEYBINDING_CONTEXT_ATTR);
 	}
 
+	public get onDidChangeContext(): Event<string[]> {
+		return this._parent.onDidChangeContext;
+	}
+
 	public getLabelFor(keybinding: Keybinding): string {
 		return this._parent.getLabelFor(keybinding);
 	}
 
 	public getHTMLLabelFor(keybinding: Keybinding): IHTMLContentElement[] {
 		return this._parent.getHTMLLabelFor(keybinding);
+	}
+
+	public getAriaLabelFor(keybinding: Keybinding): string {
+		return this._parent.getAriaLabelFor(keybinding);
 	}
 
 	public getElectronAcceleratorFor(keybinding: Keybinding): string {
@@ -370,9 +474,5 @@ class ScopedKeybindingService extends AbstractKeybindingService {
 
 	public disposeContext(contextId: number): void {
 		this._parent.disposeContext(contextId);
-	}
-
-	public executeCommand(commandId: string, args: any): TPromise<any> {
-		return this._parent.executeCommand(commandId, args);
 	}
 }

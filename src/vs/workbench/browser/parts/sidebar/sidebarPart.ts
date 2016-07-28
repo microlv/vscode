@@ -8,6 +8,7 @@ import {TPromise} from 'vs/base/common/winjs.base';
 import nls = require('vs/nls');
 import {Registry} from 'vs/platform/platform';
 import {Action} from 'vs/base/common/actions';
+import {IComposite} from 'vs/workbench/common/composite';
 import {CompositePart} from 'vs/workbench/browser/parts/compositePart';
 import {Viewlet, ViewletRegistry, Extensions as ViewletExtensions} from 'vs/workbench/browser/viewlet';
 import {IWorkbenchActionRegistry, Extensions as ActionExtensions} from 'vs/workbench/common/actionRegistry';
@@ -21,26 +22,32 @@ import {IContextMenuService} from 'vs/platform/contextview/browser/contextView';
 import {IEventService} from 'vs/platform/event/common/event';
 import {IMessageService} from 'vs/platform/message/common/message';
 import {ITelemetryService} from 'vs/platform/telemetry/common/telemetry';
-import {IKeybindingService} from 'vs/platform/keybinding/common/keybindingService';
+import {IKeybindingService} from 'vs/platform/keybinding/common/keybinding';
 import {KeyMod, KeyCode} from 'vs/base/common/keyCodes';
+import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
+import Event, {Emitter} from 'vs/base/common/event';
 
 export class SidebarPart extends CompositePart<Viewlet> implements IViewletService {
 
 	public static activeViewletSettingsKey = 'workbench.sidebar.activeviewletid';
 
-	public serviceId = IViewletService;
+	private _onDidActiveViewletChange = new Emitter<IViewlet>();
+	onDidActiveViewletChange: Event<IViewlet> = this._onDidActiveViewletChange.event;
+
+	public _serviceBrand: any;
 
 	private blockOpeningViewlet: boolean;
 
 	constructor(
-		messageService: IMessageService,
-		storageService: IStorageService,
-		eventService: IEventService,
-		telemetryService: ITelemetryService,
-		contextMenuService: IContextMenuService,
-		partService: IPartService,
-		keybindingService: IKeybindingService,
-		id: string
+		id: string,
+		@IMessageService messageService: IMessageService,
+		@IStorageService storageService: IStorageService,
+		@IEventService eventService: IEventService,
+		@ITelemetryService telemetryService: ITelemetryService,
+		@IContextMenuService contextMenuService: IContextMenuService,
+		@IPartService partService: IPartService,
+		@IKeybindingService keybindingService: IKeybindingService,
+		@IInstantiationService instantiationService: IInstantiationService
 	) {
 		super(
 			messageService,
@@ -50,6 +57,7 @@ export class SidebarPart extends CompositePart<Viewlet> implements IViewletServi
 			contextMenuService,
 			partService,
 			keybindingService,
+			instantiationService,
 			(<ViewletRegistry>Registry.as(ViewletExtensions.Viewlets)),
 			SidebarPart.activeViewletSettingsKey,
 			'sideBar',
@@ -74,11 +82,14 @@ export class SidebarPart extends CompositePart<Viewlet> implements IViewletServi
 			}
 		}
 
-		return this.openComposite(id, focus);
+		return this.openComposite(id, focus).then(composite => {
+			this._onDidActiveViewletChange.fire(composite as IComposite as IViewlet);
+			return composite;
+		});
 	}
 
 	public getActiveViewlet(): IViewlet {
-		return this.getActiveComposite();
+		return <IViewlet>this.getActiveComposite();
 	}
 
 	public getLastActiveViewletId(): string {
@@ -90,7 +101,7 @@ export class SidebarPart extends CompositePart<Viewlet> implements IViewletServi
 	}
 }
 
-export class FocusSideBarAction extends Action {
+class FocusSideBarAction extends Action {
 
 	public static ID = 'workbench.action.focusSideBar';
 	public static LABEL = nls.localize('focusSideBar', "Focus into Side Bar");
@@ -126,4 +137,4 @@ export class FocusSideBarAction extends Action {
 let registry = <IWorkbenchActionRegistry>Registry.as(ActionExtensions.WorkbenchActions);
 registry.registerWorkbenchAction(new SyncActionDescriptor(FocusSideBarAction, FocusSideBarAction.ID, FocusSideBarAction.LABEL, {
 	primary: KeyMod.CtrlCmd | KeyCode.KEY_0
-}), nls.localize('viewCategory', "View"));
+}), 'View: Focus into Side Bar', nls.localize('viewCategory', "View"));

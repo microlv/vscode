@@ -1,26 +1,28 @@
 <!-- Copyright (C) Microsoft Corporation. All rights reserved. -->
 <!DOCTYPE html>
-<html lang="en">
+<html>
 	<head>
-		<meta charset="utf-8" />
+	<meta charset="utf-8" />
 
-		<!-- Theming (do not remove, we want to early load it to avoid flashing background) -->
-		<style>
-			.monaco-shell.vs-dark { background-color: #1E1E1E; }
-		</style>
+	<!-- Theming (do not remove, we want to early load it to avoid flashing background) -->
+	<style>
+		.monaco-shell.vs-dark {
+			background-color: #1E1E1E;
+		}
+	</style>
 
-		<!-- Helpers -->
-		<script type="text/javascript">
-			var fs = require('fs');
+	<!-- Helpers -->
+	<script type="text/javascript">
+		var fs = require('fs');
 			var path = require('path');
 			var electron = require('electron');
 			var remote = electron.remote;
 			var ipc = electron.ipcRenderer;
+			var windowId = remote.getCurrentWindow().id;
 
 			function onError(error, enableDeveloperTools) {
 				if (enableDeveloperTools) {
-					remote.getCurrentWindow().webContents.openDevTools();
-					remote.getCurrentWindow().show();
+					ipc.send('vscode:openDevTools', windowId);
 				}
 
 				console.error('[uncaught exception]: ' + error);
@@ -88,54 +90,49 @@
 					window.addEventListener('keydown', function(e) {
 						var key = extractKey(e);
 						if (key === TOGGLE_DEV_TOOLS_KB) {
-							remote.getCurrentWindow().toggleDevTools();
+							ipc.send('vscode:toggleDevTools', windowId);
 						} else if (key === RELOAD_KB) {
-							ipc.send('vscode:reloadWindow', remote.getCurrentWindow().id);
+							ipc.send('vscode:reloadWindow', windowId);
 						}
 					});
 				}
 
 				process.on('uncaughtException', function(error) { onError(error, enableDeveloperTools) });
 			}
+	</script>
 
-			function getNlsPluginConfiguration(configuration) {
-				var locale = configuration.locale;
-				if (locale === 'pseudo') {
-					return { availableLanguages: {}, pseudo: true }
-				}
-				if (!configuration.isBuilt) {
-					return { availableLanguages: {} };
-				}
-				// We have a built version so we have extracted nls file. Try to find
-				// the right file to use.
-				locale = locale || window.navigator.language;
-				while (locale) {
-					var candidate = path.join(__dirname, '..', 'workbench.main.nls.') + locale + '.js';
-					if (fs.existsSync(candidate)) {
-						return { availableLanguages: { '*': locale } };
-					} else {
-						var index = locale.lastIndexOf('-');
-						if (index > 0) {
-							locale = locale.substring(0, index);
-						} else {
-							locale = null;
-						}
-					}
-				}
-				return { availableLanguages: {} };
-			}
-		</script>
-
-		<!-- Startup Code -->
-		<script type="text/javascript">
-			var webFrame = require('electron').webFrame;
+	<!-- Startup Code -->
+	<script type="text/javascript">
+		var webFrame = require('electron').webFrame;
 
 			var mainStarted = false;
 			var args = parseURLQueryArgs();
 			var configuration = JSON.parse(args['config']);
-			var enableDeveloperTools = !configuration.isBuilt || !!configuration.pluginDevelopmentPath;
+			var enableDeveloperTools = !configuration.isBuilt || !!configuration.extensionDevelopmentPath;
 
+			// Linux is a PAIN https://github.com/electron/electron/issues/3306
+			process.env['VSCODE_IPC_HOOK'] = configuration.mainIPCHandle;
 			process.env['VSCODE_SHARED_IPC_HOOK'] = configuration.sharedIPCHandle;
+
+			// Get the nls configuration into the process.env as early as possible.
+			var nlsConfig = { availableLanguages: {} };
+			if (configuration.userEnv && configuration.userEnv['VSCODE_NLS_CONFIG']) {
+				var config = configuration.userEnv['VSCODE_NLS_CONFIG'];
+				process.env['VSCODE_NLS_CONFIG'] = config;
+				try {
+					if (config) {
+						nlsConfig = JSON.parse(config);
+					}
+				} catch (e) {
+				}
+			}
+			var locale = nlsConfig.availableLanguages['*'] || 'en';
+			if (locale === 'zh-tw') {
+				locale = 'zh-Hant';
+			} else if (locale === 'zh-cn') {
+				locale = 'zh-Hans';
+			}
+			window.document.documentElement.setAttribute('lang', locale);
 
 			registerListeners(enableDeveloperTools);
 
@@ -164,11 +161,14 @@
 			// In the bundled version the nls plugin is packaged with the loader so the NLS Plugins
 			// loads as soon as the loader loads. To be able to have pseudo translation
 			createScript(rootUrl + '/vs/loader.js', function() {
-				var nlsConfig = getNlsPluginConfiguration(configuration);
+				define('fs', ['original-fs'], function(originalFS) { return originalFS; }); // replace the patched electron fs with the original node fs for all AMD code
 				require.config({
 					baseUrl: rootUrl,
 					'vs/nls': nlsConfig,
-					recordStats: configuration.enablePerformance
+					recordStats: configuration.enablePerformance,
+					ignoreDuplicateModules: [
+						'vs/workbench/parts/search/common/searchQuery'
+					]
 				});
 				if (nlsConfig.pseudo) {
 					require(['vs/nls'], function(nlsPlugin) {
@@ -176,30 +176,26 @@
 					});
 				}
 
-				var hasWorkspaceContext = configuration.workspacePath;
-
-				window.MonacoEnvironment = {
-					'enableTasks': hasWorkspaceContext,
-					'enableJavaScriptRewriting': true,
-					'enableSendASmile' : !!configuration.sendASmile,
-					'enableTypeScriptServiceMode': true || !process.env['VSCODE_TSWORKER'],
-					'enableTypeScriptServiceModeForJS': !!process.env['CODE_TSJS'] || !!process.env['VSCODE_TSJS']
-				};
-
-				var programStart = remote.getGlobal('programStart');
-				var vscodeStart = remote.getGlobal('vscodeStart');
-
+				window.MonacoEnvironment = {};
 				var timers = window.MonacoEnvironment.timers = {
-					start: new Date(programStart || vscodeStart),
+					start: new Date()
 				};
 
-				if (programStart) {
-					timers.beforeProgram = new Date(programStart);
-					timers.afterProgram = new Date(vscodeStart);
+				if (configuration.enablePerformance) {
+					var programStart = remote.getGlobal('programStart');
+					var vscodeStart = remote.getGlobal('vscodeStart');
+
+					if (programStart) {
+						timers.beforeProgram = new Date(programStart);
+						timers.afterProgram = new Date(vscodeStart);
+					}
+
+					timers.vscodeStart = new Date(vscodeStart);
+					timers.start = new Date(programStart || vscodeStart);
 				}
 
-				timers.vscodeStart = new Date(vscodeStart);
 				timers.beforeLoad = new Date();
+
 				require([
 					'vs/workbench/workbench.main',
 					'vs/nls!vs/workbench/workbench.main',
@@ -214,20 +210,23 @@
 				});
 			});
 
-		</script>
+	</script>
 	</head>
-	<body class="monaco-shell vs-dark">
+	<body class="monaco-shell vs-dark" aria-label="">
 		<script>
 			(function() {
-				try {
-					var theme = window.localStorage.getItem('storage://global/workbench.theme');
-					if (theme && theme.indexOf('vs-dark') < 0) {
-						window.document.body.className = 'monaco-shell'; // remove the dark theme class if we are on a light theme
+					try {
+						var theme = window.localStorage.getItem('storage://global/workbench.theme');
+						if (theme) {
+							var baseTheme = theme.split(' ')[0];
+							if (baseTheme !== 'vs-dark') {
+								window.document.body.className = 'monaco-shell ' + baseTheme;
+							}
+						}
+					} catch (error) {
+						console.error(error);
 					}
-				} catch (error) {
-					console.error(error);
-				}
-			})();
+				})();
 		</script>
 	</body>
 </html>

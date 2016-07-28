@@ -12,9 +12,10 @@ import {Gesture, EventType} from 'vs/base/browser/touch';
 import {ActionRunner, IAction} from 'vs/base/common/actions';
 import {ActionItem, IActionItem} from 'vs/base/browser/ui/actionbar/actionbar';
 import {EventEmitter} from 'vs/base/common/eventEmitter';
-import {IDisposable, disposeAll} from 'vs/base/common/lifecycle';
+import {IDisposable, dispose} from 'vs/base/common/lifecycle';
 import {IContextViewProvider} from 'vs/base/browser/ui/contextview/contextview';
 import {IMenuOptions} from 'vs/base/browser/ui/menu/menu';
+import {Keybinding} from 'vs/base/common/keyCodes';
 
 export interface ILabelRenderer {
 	(container: HTMLElement): IDisposable;
@@ -80,7 +81,7 @@ export class BaseDropdown extends ActionRunner {
 			e.preventDefault();
 			e.stopPropagation();
 
-			this.toggleDropdown();
+			this.show();
 		}).appendTo(this.$el);
 
 		let cleanupFn = labelRenderer(this.$label.getHTMLElement());
@@ -94,14 +95,6 @@ export class BaseDropdown extends ActionRunner {
 
 	public set tooltip(tooltip: string) {
 		this.$label.title(tooltip);
-	}
-
-	/*protected*/ toggleDropdown(): void {
-		if (this.$el.hasClass('active')) {
-			this.hide();
-		} else {
-			this.show();
-		}
 	}
 
 	/*protected*/ show(): void {
@@ -120,7 +113,7 @@ export class BaseDropdown extends ActionRunner {
 		super.dispose();
 		this.hide();
 
-		this.toDispose = disposeAll(this.toDispose);
+		this.toDispose = dispose(this.toDispose);
 
 		if (this.$boxContainer) {
 			this.$boxContainer.destroy();
@@ -192,10 +185,11 @@ export class Dropdown extends BaseDropdown {
 }
 
 export interface IContextMenuDelegate {
-	getAnchor(): any;
+	getAnchor(): HTMLElement | { x: number; y: number; };
 	getActions(): TPromise<IAction[]>;
 	getActionItem?(action: IAction): IActionItem;
 	getActionsContext?(): any;
+	getKeyBinding?(action: IAction): Keybinding;
 	getMenuClassName?(): string;
 	onHide?(didCancel: boolean): void;
 }
@@ -219,7 +213,6 @@ export class DropdownMenu extends BaseDropdown {
 
 	/*protected*/ _contextMenuProvider: IContextMenuProvider;
 	private _menuOptions: IMenuOptions;
-	/*protected*/ currentContainer: HTMLElement;
 	/*protected*/ _actions: IAction[];
 	/*protected*/ actionProvider: IActionProvider;
 	private menuClassName: string;
@@ -228,7 +221,6 @@ export class DropdownMenu extends BaseDropdown {
 		super(container, options);
 
 		this._contextMenuProvider = options.contextMenuProvider;
-		this.currentContainer = null;
 		this.actions = options.actions || [];
 		this.actionProvider = options.actionProvider;
 		this.menuClassName = options.menuClassName || '';
@@ -270,11 +262,9 @@ export class DropdownMenu extends BaseDropdown {
 			getActions: () => TPromise.as(this.actions),
 			getActionsContext: () => this.menuOptions ? this.menuOptions.context : null,
 			getActionItem: (action) => this.menuOptions && this.menuOptions.actionItemProvider ? this.menuOptions.actionItemProvider(action) : null,
+			getKeyBinding: (action: IAction) => this.menuOptions && this.menuOptions.getKeyBinding ? this.menuOptions.getKeyBinding(action): null,
 			getMenuClassName: () => this.menuClassName,
-			onHide: () => {
-				this.$el.removeClass('active');
-				this.currentContainer = null;
-			}
+			onHide: () => this.$el.removeClass('active')
 		});
 	}
 

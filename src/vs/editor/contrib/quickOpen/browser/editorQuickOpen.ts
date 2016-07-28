@@ -7,13 +7,13 @@
 import {TPromise} from 'vs/base/common/winjs.base';
 import {QuickOpenModel} from 'vs/base/parts/quickopen/browser/quickOpenModel';
 import {IAutoFocus} from 'vs/base/parts/quickopen/common/quickOpen';
-import {INullService} from 'vs/platform/instantiation/common/instantiation';
 import {EditorAction} from 'vs/editor/common/editorAction';
 import {Behaviour} from 'vs/editor/common/editorActionEnablement';
 import * as editorCommon from 'vs/editor/common/editorCommon';
 import {ICodeEditor} from 'vs/editor/browser/editorBrowser';
 import {EditorBrowserRegistry} from 'vs/editor/browser/editorBrowserExtensions';
 import {QuickOpenEditorWidget} from './quickOpenEditorWidget';
+import {Selection} from 'vs/editor/common/core/selection';
 
 export interface IQuickOpenControllerOpts {
 	inputAriaLabel: string;
@@ -34,7 +34,7 @@ export class QuickOpenController implements editorCommon.IEditorContribution {
 	private editor:ICodeEditor;
 	private widget:QuickOpenEditorWidget;
 
-	constructor(editor:ICodeEditor, @INullService ns) {
+	constructor(editor:ICodeEditor) {
 		this.editor = editor;
 	}
 
@@ -80,7 +80,7 @@ export class QuickOpenController implements editorCommon.IEditorContribution {
  */
 export class BaseEditorQuickOpenAction extends EditorAction {
 	private lineHighlightDecorationId:string;
-	private lastKnownEditorSelection:editorCommon.IEditorSelection;
+	private lastKnownEditorSelection:Selection;
 
 	constructor(descriptor:editorCommon.IEditorActionDescriptorData, editor:editorCommon.ICommonCodeEditor, label:string, condition:Behaviour = Behaviour.WidgetFocus) {
 		super(descriptor, editor, condition);

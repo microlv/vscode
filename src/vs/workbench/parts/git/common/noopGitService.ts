@@ -4,93 +4,105 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import git = require('vs/workbench/parts/git/common/git');
-import winjs = require('vs/base/common/winjs.base');
+import { IRawGitService, IRawStatus, ServiceState, RawServiceState } from 'vs/workbench/parts/git/common/git';
+import { TPromise } from 'vs/base/common/winjs.base';
+import Event, { Emitter } from 'vs/base/common/event';
 
-export class NoOpGitService implements git.IRawGitService {
-	private static STATUS:git.IRawStatus = {
+export class NoOpGitService implements IRawGitService {
+
+	private _onOutput = new Emitter<string>();
+	get onOutput(): Event<string> { return this._onOutput.event; }
+
+	private static STATUS:IRawStatus = {
 		repositoryRoot: null,
-		state: git.ServiceState.NotAWorkspace,
+		state: ServiceState.NotAWorkspace,
 		status: [],
 		HEAD: null,
-		heads: [],
-		tags: [],
+		refs: [],
 		remotes: []
 	};
 
-	public serviceState(): winjs.TPromise<git.RawServiceState> {
-		return winjs.TPromise.as(git.RawServiceState.OK);
+	getVersion(): TPromise<string> {
+		return TPromise.as(null);
 	}
 
-	public status(): winjs.TPromise<git.IRawStatus> {
-		return winjs.TPromise.as(NoOpGitService.STATUS);
+	serviceState(): TPromise<RawServiceState> {
+		return TPromise.as(RawServiceState.OK);
 	}
 
-	public init(): winjs.TPromise<git.IRawStatus> {
-		return winjs.TPromise.as(NoOpGitService.STATUS);
+	statusCount(): TPromise<number> {
+		return TPromise.as(0);
 	}
 
-	public add(filesPaths?: string[]): winjs.TPromise<git.IRawStatus> {
-		return winjs.TPromise.as(NoOpGitService.STATUS);
+	status(): TPromise<IRawStatus> {
+		return TPromise.as(NoOpGitService.STATUS);
 	}
 
-	public stage(filePath: string, content: string): winjs.TPromise<git.IRawStatus> {
-		return winjs.TPromise.as(NoOpGitService.STATUS);
+	init(): TPromise<IRawStatus> {
+		return TPromise.as(NoOpGitService.STATUS);
 	}
 
-	public branch(name: string, checkout?: boolean): winjs.TPromise<git.IRawStatus> {
-		return winjs.TPromise.as(NoOpGitService.STATUS);
+	add(filesPaths?: string[]): TPromise<IRawStatus> {
+		return TPromise.as(NoOpGitService.STATUS);
 	}
 
-	public checkout(treeish?: string, filePaths?: string[]): winjs.TPromise<git.IRawStatus> {
-		return winjs.TPromise.as(NoOpGitService.STATUS);
+	stage(filePath: string, content: string): TPromise<IRawStatus> {
+		return TPromise.as(NoOpGitService.STATUS);
 	}
 
-	public clean(filePaths: string[]): winjs.TPromise<git.IRawStatus> {
-		return winjs.TPromise.as(NoOpGitService.STATUS);
+	branch(name: string, checkout?: boolean): TPromise<IRawStatus> {
+		return TPromise.as(NoOpGitService.STATUS);
 	}
 
-	public undo(): winjs.TPromise<git.IRawStatus> {
-		return winjs.TPromise.as(NoOpGitService.STATUS);
+	checkout(treeish?: string, filePaths?: string[]): TPromise<IRawStatus> {
+		return TPromise.as(NoOpGitService.STATUS);
 	}
 
-	public reset(treeish: string, hard?: boolean): winjs.TPromise<git.IRawStatus> {
-		return winjs.TPromise.as(NoOpGitService.STATUS);
+	clean(filePaths: string[]): TPromise<IRawStatus> {
+		return TPromise.as(NoOpGitService.STATUS);
 	}
 
-	public revertFiles(treeish: string, filePaths?: string[]): winjs.TPromise<git.IRawStatus> {
-		return winjs.TPromise.as(NoOpGitService.STATUS);
+	undo(): TPromise<IRawStatus> {
+		return TPromise.as(NoOpGitService.STATUS);
 	}
 
-	public fetch(): winjs.TPromise<git.IRawStatus> {
-		return winjs.TPromise.as(NoOpGitService.STATUS);
+	reset(treeish: string, hard?: boolean): TPromise<IRawStatus> {
+		return TPromise.as(NoOpGitService.STATUS);
 	}
 
-	public pull(rebase?: boolean): winjs.TPromise<git.IRawStatus> {
-		return winjs.TPromise.as(NoOpGitService.STATUS);
+	revertFiles(treeish: string, filePaths?: string[]): TPromise<IRawStatus> {
+		return TPromise.as(NoOpGitService.STATUS);
 	}
 
-	public push(): winjs.TPromise<git.IRawStatus> {
-		return winjs.TPromise.as(NoOpGitService.STATUS);
+	fetch(): TPromise<IRawStatus> {
+		return TPromise.as(NoOpGitService.STATUS);
 	}
 
-	public sync(): winjs.TPromise<git.IRawStatus> {
-		return winjs.TPromise.as(NoOpGitService.STATUS);
+	pull(rebase?: boolean): TPromise<IRawStatus> {
+		return TPromise.as(NoOpGitService.STATUS);
 	}
 
-	public commit(message: string, amend?: boolean, stage?: boolean): winjs.TPromise<git.IRawStatus> {
-		return winjs.TPromise.as(NoOpGitService.STATUS);
+	push(): TPromise<IRawStatus> {
+		return TPromise.as(NoOpGitService.STATUS);
 	}
 
-	public detectMimetypes(path: string, treeish?: string): winjs.TPromise<string[]> {
-		return winjs.TPromise.as([]);
+	sync(): TPromise<IRawStatus> {
+		return TPromise.as(NoOpGitService.STATUS);
 	}
 
-	public show(path: string, treeish?: string): winjs.TPromise<string> {
-		return winjs.TPromise.as(null);
+	commit(message: string, amend?: boolean, stage?: boolean): TPromise<IRawStatus> {
+		return TPromise.as(NoOpGitService.STATUS);
 	}
 
-	public onOutput(): winjs.Promise {
-		return winjs.TPromise.as(()=><any>null);
+	detectMimetypes(path: string, treeish?: string): TPromise<string[]> {
+		return TPromise.as([]);
+	}
+
+	show(path: string, treeish?: string): TPromise<string> {
+		return TPromise.as(null);
+	}
+
+	getCommitTemplate(): TPromise<string> {
+		return TPromise.as(null);
 	}
 }

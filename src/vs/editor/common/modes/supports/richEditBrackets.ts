@@ -7,14 +7,14 @@
 import * as strings from 'vs/base/common/strings';
 import {Range} from 'vs/editor/common/core/range';
 import {IRichEditBracket} from 'vs/editor/common/editorCommon';
-import * as modes from 'vs/editor/common/modes';
+import {IRichEditBrackets, CharacterPair} from 'vs/editor/common/modes';
 
 interface ISimpleInternalBracket {
 	open: string;
 	close: string;
 }
 
-export class RichEditBrackets implements modes.IRichEditBrackets {
+export class RichEditBrackets implements IRichEditBrackets {
 
 	public brackets: IRichEditBracket[];
 	public forwardRegex: RegExp;
@@ -23,7 +23,7 @@ export class RichEditBrackets implements modes.IRichEditBrackets {
 	public textIsBracket: {[text:string]:IRichEditBracket;};
 	public textIsOpenBracket: {[text:string]:boolean;};
 
-	constructor(modeId: string, brackets: modes.CharacterPair[]) {
+	constructor(modeId: string, brackets: CharacterPair[]) {
 		this.brackets = brackets.map((b) => {
 			return {
 				modeId: modeId,
@@ -121,11 +121,11 @@ export class BracketsUtils {
 			return null;
 		}
 
-		let matchOffset = reversedText.length - 1 - m.index;
+		let matchOffset = reversedText.length - m.index;
 		let matchLength = m[0].length;
 		let absoluteMatchOffset = offset + matchOffset;
 
-		return new Range(lineNumber, absoluteMatchOffset + 1, lineNumber, absoluteMatchOffset + 1 + matchLength);
+		return new Range(lineNumber, absoluteMatchOffset - matchLength + 1, lineNumber, absoluteMatchOffset + 1);
 	}
 
 	public static findPrevBracketInToken(reversedBracketRegex:RegExp, lineNumber:number, lineText:string, currentTokenStart:number, currentTokenEnd:number): Range {

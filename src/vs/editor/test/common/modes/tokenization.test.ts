@@ -11,7 +11,8 @@ import * as modes from 'vs/editor/common/modes';
 import {AbstractState} from 'vs/editor/common/modes/abstractState';
 import {handleEvent} from 'vs/editor/common/modes/supports';
 import {IEnteringNestedModeData, ILeavingNestedModeData, TokenizationSupport} from 'vs/editor/common/modes/supports/tokenizationSupport';
-import {createLineContext} from 'vs/editor/test/common/modesTestUtils';
+import {createMockLineContext} from 'vs/editor/test/common/modesTestUtils';
+import {MockMode} from 'vs/editor/test/common/mocks/mockMode';
 
 export class State extends AbstractState {
 
@@ -28,22 +29,15 @@ export class State extends AbstractState {
 	}
 }
 
-export class Mode implements modes.IMode {
+export class Mode extends MockMode {
 
 	public tokenizationSupport: modes.ITokenizationSupport;
 
 	constructor() {
+		super();
 		this.tokenizationSupport = new TokenizationSupport(this, {
 			getInitialState: () => new State(this)
-		}, false, false);
-	}
-
-	public getId(): string {
-		return 'testMode';
-	}
-
-	public toSimplifiedMode(): modes.IMode {
-		return this;
+		}, false);
 	}
 }
 
@@ -98,35 +92,23 @@ export class StateMemorizingLastWord extends AbstractState {
 	}
 }
 
-export class SwitchingMode implements modes.IMode {
+export class SwitchingMode extends MockMode {
 
-	private _id:string;
 	private _switchingModeDescriptor:IModeSwitchingDescriptor;
 
 	public tokenizationSupport: modes.ITokenizationSupport;
 
 	constructor(id:string, descriptor:IModeSwitchingDescriptor) {
-		this._id = id;
+		super(id);
 		this._switchingModeDescriptor = descriptor;
-		this.tokenizationSupport = new TokenizationSupport(this, this, true, false);
+		this.tokenizationSupport = new TokenizationSupport(this, this, true);
 	}
 
-	public getId():string {
-		return this._id;
-	}
-
-	public toSimplifiedMode(): modes.IMode {
-		return this;
-	}
-
-	public addSupportChangedListener(callback: (e: IModeSupportChangedEvent) => void): IDisposable {
+	setTokenizationSupport<T>(callback:(mode:modes.IMode)=>T): IDisposable {
 		return EmptyDisposable;
 	}
 
-	/**
-	 * Register a support by name. Only optional.
-	 */
-	public registerSupport<T>(support:string, callback:(mode:modes.IMode)=>T): IDisposable {
+	public addSupportChangedListener(callback: (e: IModeSupportChangedEvent) => void): IDisposable {
 		return EmptyDisposable;
 	}
 
@@ -167,7 +149,6 @@ export class SwitchingMode implements modes.IMode {
 interface ITestToken {
 	startIndex:number;
 	type:string;
-	bracket?:modes.Bracket;
 }
 function assertTokens(actual:modes.IToken[], expected:ITestToken[], message?:string) {
 	assert.equal(actual.length, expected.length, 'Lengths mismatch');
@@ -355,8 +336,8 @@ suite('Editor Modes - Tokenization', () => {
 			{ startIndex: 5, id: 'B' }
 		]);
 
-		handleEvent(createLineContext('abc (def', lineTokens), 0, (mode:modes.IMode, context:modes.ILineContext, offset:number) => {
-			assert.deepEqual(mode.getId(), 'A');
+		handleEvent(createMockLineContext('abc (def', lineTokens), 0, (modeId:string, context:modes.ILineContext, offset:number) => {
+			assert.deepEqual(modeId, 'A');
 			assert.equal(context.getTokenCount(), 3);
 			assert.equal(context.getTokenStartIndex(0), 0);
 			assert.equal(context.getTokenType(0), 'A.abc');
@@ -368,8 +349,8 @@ suite('Editor Modes - Tokenization', () => {
 			assert.equal(context.getLineContent(), 'abc (');
 		});
 
-		handleEvent(createLineContext('abc (def', lineTokens), 6, (mode:modes.IMode, context:modes.ILineContext, offset:number) => {
-			assert.deepEqual(mode.getId(), 'B');
+		handleEvent(createMockLineContext('abc (def', lineTokens), 6, (modeId:string, context:modes.ILineContext, offset:number) => {
+			assert.deepEqual(modeId, 'B');
 			assert.equal(context.getTokenCount(), 1);
 			assert.equal(context.getTokenStartIndex(0), 0);
 			assert.equal(context.getTokenType(0), 'B.def');

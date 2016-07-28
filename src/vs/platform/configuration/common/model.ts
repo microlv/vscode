@@ -80,9 +80,8 @@ export function consolidate(configMap: { [key: string]: IConfigFile; }): { conte
 	// For each config file in .vscode folder
 	Object.keys(configMap).forEach((configFileName) => {
 		let config = objects.clone(configMap[configFileName]);
-
 		let matches = regexp.exec(configFileName);
-		if (!matches) {
+		if (!matches || !config) {
 			return;
 		}
 
@@ -118,16 +117,17 @@ export function consolidate(configMap: { [key: string]: IConfigFile; }): { conte
 
 // defaults...
 
-function processDefaultValues(withConfig: (config: configurationRegistry.IConfigurationNode, isTop?: boolean) => void): void {
+function processDefaultValues(withConfig: (config: configurationRegistry.IConfigurationNode, isTop?: boolean) => boolean): void {
 
 	let configurations = (<configurationRegistry.IConfigurationRegistry>platform.Registry.as(configurationRegistry.Extensions.Configuration)).getConfigurations();
 
-	let visit = (config: configurationRegistry.IConfigurationNode, isFirst: boolean) => {
-		withConfig(config, isFirst);
+	let visit = (config: configurationRegistry.IConfigurationNode, level: number) => {
+		let handled = withConfig(config, level === 0);
 
 		if (Array.isArray(config.allOf)) {
 			config.allOf.forEach((c) => {
-				visit(c, false);
+				// if the config node only contains an `allOf` we treat the `allOf` children as if they were at the top level
+				visit(c, (!handled && level === 0) ? level : level + 1);
 			});
 		}
 	};
@@ -140,10 +140,14 @@ function processDefaultValues(withConfig: (config: configurationRegistry.IConfig
 		if (typeof c2.order !== 'number') {
 			return -1;
 		}
-
+		if (c1.order === c2.order) {
+			let title1 = c1.title || '';
+			let title2 = c2.title || '';
+			return title1.localeCompare(title2);
+		}
 		return c1.order - c2.order;
 	}).forEach((config) => {
-		visit(config, true);
+		visit(config, 0);
 	});
 }
 
@@ -151,7 +155,7 @@ function processDefaultValues(withConfig: (config: configurationRegistry.IConfig
 export function getDefaultValues(): any {
 	let ret: any = Object.create(null);
 
-	let handleConfig = (config: configurationRegistry.IConfigurationNode, isTop: boolean) => {
+	let handleConfig = (config: configurationRegistry.IConfigurationNode, isTop: boolean) : boolean => {
 		if (config.properties) {
 			Object.keys(config.properties).forEach((key) => {
 				let prop = config.properties[key];
@@ -161,30 +165,35 @@ export function getDefaultValues(): any {
 				}
 				setNode(ret, key, value);
 			});
+			return true;
 		}
+		return false;
 	};
 	processDefaultValues(handleConfig);
 	return ret;
 }
 
 
-export function getDefaultValuesContent(): string {
+export function getDefaultValuesContent(indent: string): string {
 	let lastEntry = -1;
 	let result: string[] = [];
 	result.push('{');
 
-	let handleConfig = (config: configurationRegistry.IConfigurationNode, isTop: boolean) => {
+	let handleConfig = (config: configurationRegistry.IConfigurationNode, isTop: boolean) : boolean => {
 
+		let handled = false;
 		if (config.title) {
+			handled = true;
 			if (isTop) {
 				result.push('');
-				result.push('\t//-------- ' + config.title + ' --------');
+				result.push('// ' + config.title);
 			} else {
-				result.push('\t// ' + config.title);
+				result.push(indent + '// ' + config.title);
 			}
 			result.push('');
 		}
 		if (config.properties) {
+			handled = true;
 			Object.keys(config.properties).forEach((key) => {
 
 				let prop = config.properties[key];
@@ -193,12 +202,12 @@ export function getDefaultValuesContent(): string {
 					defaultValue = getDefaultValue(prop.type);
 				}
 				if (prop.description) {
-					result.push('\t// ' + prop.description);
+					result.push(indent + '// ' + prop.description);
 				}
 
-				let valueString = JSON.stringify(defaultValue, null, '\t');
+				let valueString = JSON.stringify(defaultValue, null, indent);
 				if (valueString && (typeof defaultValue === 'object')) {
-					valueString = addIndent(valueString);
+					valueString = addIndent(valueString, indent);
 				}
 
 				if (lastEntry !== -1) {
@@ -206,10 +215,11 @@ export function getDefaultValuesContent(): string {
 				}
 				lastEntry = result.length;
 
-				result.push('\t' + JSON.stringify(key) + ': ' + valueString);
+				result.push(indent + JSON.stringify(key) + ': ' + valueString);
 				result.push('');
 			});
 		}
+		return handled;
 	};
 	processDefaultValues(handleConfig);
 
@@ -217,15 +227,17 @@ export function getDefaultValuesContent(): string {
 	return result.join('\n');
 }
 
-function addIndent(str: string): string {
-	return str.split('\n').join('\n\t');
+function addIndent(str: string, indent: string): string {
+	return str.split('\n').join('\n' + indent);
 }
 
-function getDefaultValue(type: string): any {
-	switch (type) {
+function getDefaultValue(type: string | string[]): any {
+	let t = Array.isArray(type) ? (<string[]> type)[0] : <string> type;
+	switch (t) {
 		case 'boolean':
 			return false;
 		case 'integer':
+		case 'number':
 			return 0;
 		case 'string':
 			return '';

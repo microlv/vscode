@@ -7,6 +7,7 @@
 import Platform = require('vs/base/common/platform');
 import errors = require('vs/base/common/errors');
 import precision = require('vs/base/common/stopwatch');
+import {IDisposable} from 'vs/base/common/lifecycle';
 
 export var ENABLE_TIMER = false;
 var msWriteProfilerMark = Platform.globals['msWriteProfilerMark'];
@@ -138,7 +139,7 @@ export interface IEventsListener {
 	(events: ITimerEvent[]): void;
 }
 
-export class TimeKeeper /*extends EventEmitter.EventEmitter*/ {
+export class TimeKeeper {
 	/**
 	 * After being started for 1 minute, all timers are automatically stopped.
 	 */
@@ -205,17 +206,18 @@ export class TimeKeeper /*extends EventEmitter.EventEmitter*/ {
 		}
 	}
 
-	public addListener(listener: IEventsListener): void {
+	public addListener(listener: IEventsListener): IDisposable {
 		this.listeners.push(listener);
-	}
-
-	public removeListener(listener: IEventsListener): void {
-		for (var i = 0; i < this.listeners.length; i++) {
-			if (this.listeners[i] === listener) {
-				this.listeners.splice(i, 1);
-				return;
+		return {
+			dispose: () => {
+				for (var i = 0; i < this.listeners.length; i++) {
+					if (this.listeners[i] === listener) {
+						this.listeners.splice(i, 1);
+						return;
+					}
+				}
 			}
-		}
+		};
 	}
 
 	private addEvent(event: ITimerEvent): void {

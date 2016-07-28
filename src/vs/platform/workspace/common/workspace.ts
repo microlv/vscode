@@ -5,12 +5,12 @@
 'use strict';
 
 import URI from 'vs/base/common/uri';
-import {createDecorator, ServiceIdentifier} from 'vs/platform/instantiation/common/instantiation';
+import {createDecorator} from 'vs/platform/instantiation/common/instantiation';
 
 export const IWorkspaceContextService = createDecorator<IWorkspaceContextService>('contextService');
 
 export interface IWorkspaceContextService {
-	serviceId: ServiceIdentifier<any>;
+	_serviceBrand: any;
 
 	/**
 	 * Provides access to the workspace object the platform is running with. This may be null if the workbench was opened
@@ -85,8 +85,6 @@ export interface IConfiguration {
 }
 
 export interface IEnvironment {
-	language: string;
-
 	appName: string;
 	appRoot: string;
 	isBuilt: boolean;
@@ -103,11 +101,13 @@ export interface IEnvironment {
 
 	extensionsGallery: {
 		serviceUrl: string;
-		cacheUrl: string;
 		itemUrl: string;
 	};
 
+	extensionTips: { [id: string]: string; };
+
 	releaseNotesUrl: string;
+	licenseUrl: string;
 	productDownloadUrl: string;
 
 	welcomePage: string;
@@ -118,20 +118,22 @@ export interface IEnvironment {
 	appSettingsPath: string;
 	appKeybindingsPath: string;
 
-	debugPluginHostPort: number;
-	debugBrkPluginHost: boolean;
-	disablePlugins: boolean;
+	debugExtensionHostPort: number;
+	debugBrkExtensionHost: boolean;
+	disableExtensions: boolean;
 
-	logPluginHostCommunication: boolean;
+	logExtensionHostCommunication: boolean;
+	debugBrkFileWatcherPort: number;
 	verboseLogging: boolean;
 	enablePerformance: boolean;
 
-	userPluginsHome: string;
+	userExtensionsHome: string;
 	sharedIPCHandle: string;
-	pluginDevelopmentPath: string;
-	pluginTestsPath: string;
+	extensionDevelopmentPath: string;
+	extensionTestsPath: string;
 
-	recentPaths: string[];
+	recentFiles: string[];
+	recentFolders: string[];
 
 	enableTelemetry: boolean;
 

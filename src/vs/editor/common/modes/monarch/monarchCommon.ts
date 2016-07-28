@@ -4,8 +4,6 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import {CharacterPair, Bracket, IAutoClosingPairConditional, ISuggestion} from 'vs/editor/common/modes';
-
 /*
  * This module exports common types and functionality shared between
  * the Monarch compiler that compiles JSON to ILexer, and the Monarch
@@ -17,11 +15,16 @@ import {CharacterPair, Bracket, IAutoClosingPairConditional, ISuggestion} from '
  * Inside monarch we use fully typed definitions and compiled versions of the more abstract JSON descriptions.
  */
 
+export enum MonarchBracket {
+	None = 0,
+	Open = 1,
+	Close = -1
+}
+
 export interface ILexerMin {
+	languageId: string;
 	noThrow: boolean;
 	ignoreCase: boolean;
-	displayName: string;
-	name: string;
 	usesEmbedded: boolean;
 	defaultToken: string;
 	stateNames: Object;
@@ -31,36 +34,10 @@ export interface ILexer extends ILexerMin {
 	maxStack: number;
 	start: string;
 	ignoreCase: boolean;
-	lineComment: string;
-	blockCommentStart: string;
-	blockCommentEnd: string;
 	tokenPostfix: string;
-	suggestSupport: {
-		textualCompletions: boolean;
-		disableAutoTrigger: boolean;
-		triggerCharacters: string[];
-		snippets: ISuggestion[];
-	};
 
 	tokenizer: IRule[][];
 	brackets: IBracket[];
-	wordDefinition: RegExp;
-	autoClosingPairs: IAutoClosingPairConditional[];
-
-	standardBrackets: CharacterPair[];
-	// enhancedBrackets: IRegexBracketPair[];
-	outdentTriggers: string;
-}
-
-export interface IAutoIndent {
-	match: RegExp;
-	matchAfter: RegExp;
-}
-
-export interface IAutoComplete {
-	triggers: string;
-	match: RegExp;
-	complete: string;
 }
 
 export interface IBracket {
@@ -88,7 +65,7 @@ export interface IAction {
 	tokenSubst?: boolean;
 	next?: string;
 	nextEmbedded?: string;
-	bracket?: Bracket;
+	bracket?: MonarchBracket;
 	log?: string;
 	switchTo?: string;
 	goBack?: number;
@@ -130,7 +107,7 @@ export function sanitize(s: string) {
  * Logs a message.
  */
 export function log(lexer: ILexerMin, msg: string) {
-	console.log(`${lexer.name}: ${msg}`);
+	console.log(`${lexer.languageId}: ${msg}`);
 }
 
 // Throwing errors
@@ -139,7 +116,7 @@ export function log(lexer: ILexerMin, msg: string) {
  * Throws error. May actually just log the error and continue.
  */
 export function throwError(lexer: ILexerMin, msg: string) {
-	throw new Error(`${lexer.name}: ${msg}`);
+	throw new Error(`${lexer.languageId}: ${msg}`);
 }
 
 // Helper functions for rule finding and substitution

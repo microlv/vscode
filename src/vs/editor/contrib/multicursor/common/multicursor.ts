@@ -7,7 +7,6 @@
 import * as nls from 'vs/nls';
 import {KeyCode, KeyMod} from 'vs/base/common/keyCodes';
 import {TPromise} from 'vs/base/common/winjs.base';
-import {INullService} from 'vs/platform/instantiation/common/instantiation';
 import {EditorAction, HandlerEditorAction} from 'vs/editor/common/editorAction';
 import {Handler, ICommonCodeEditor, IEditorActionDescriptorData, ISelection} from 'vs/editor/common/editorCommon';
 import {CommonEditorRegistry, ContextKey, EditorActionDescriptor} from 'vs/editor/common/editorCommonExtensions';
@@ -15,7 +14,7 @@ import {CommonEditorRegistry, ContextKey, EditorActionDescriptor} from 'vs/edito
 class InsertCursorAbove extends HandlerEditorAction {
 	static ID = 'editor.action.insertCursorAbove';
 
-	constructor(descriptor:IEditorActionDescriptorData, editor:ICommonCodeEditor, @INullService ns) {
+	constructor(descriptor:IEditorActionDescriptorData, editor:ICommonCodeEditor) {
 		super(descriptor, editor, Handler.AddCursorUp);
 	}
 }
@@ -23,7 +22,7 @@ class InsertCursorAbove extends HandlerEditorAction {
 class InsertCursorBelow extends HandlerEditorAction {
 	static ID = 'editor.action.insertCursorBelow';
 
-	constructor(descriptor:IEditorActionDescriptorData, editor:ICommonCodeEditor, @INullService ns) {
+	constructor(descriptor:IEditorActionDescriptorData, editor:ICommonCodeEditor) {
 		super(descriptor, editor, Handler.AddCursorDown);
 	}
 }
@@ -31,7 +30,7 @@ class InsertCursorBelow extends HandlerEditorAction {
 class InsertCursorAtEndOfEachLineSelected extends EditorAction {
 	static ID = 'editor.action.insertCursorAtEndOfEachLineSelected';
 
-	constructor(descriptor:IEditorActionDescriptorData, editor:ICommonCodeEditor, @INullService ns) {
+	constructor(descriptor:IEditorActionDescriptorData, editor:ICommonCodeEditor) {
 		super(descriptor, editor);
 	}
 
@@ -75,7 +74,7 @@ CommonEditorRegistry.registerEditorAction(new EditorActionDescriptor(InsertCurso
 		primary: KeyMod.Shift | KeyMod.Alt | KeyCode.UpArrow,
 		secondary: [KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.UpArrow]
 	}
-}));
+}, 'Add Cursor Above'));
 CommonEditorRegistry.registerEditorAction(new EditorActionDescriptor(InsertCursorBelow, InsertCursorBelow.ID, nls.localize('mutlicursor.insertBelow', "Add Cursor Below"), {
 	context: ContextKey.EditorTextFocus,
 	primary: KeyMod.CtrlCmd | KeyMod.Alt | KeyCode.DownArrow,
@@ -83,8 +82,8 @@ CommonEditorRegistry.registerEditorAction(new EditorActionDescriptor(InsertCurso
 		primary: KeyMod.Shift | KeyMod.Alt | KeyCode.DownArrow,
 		secondary: [KeyMod.CtrlCmd | KeyMod.Shift | KeyCode.DownArrow]
 	}
-}));
-CommonEditorRegistry.registerEditorAction(new EditorActionDescriptor(InsertCursorAtEndOfEachLineSelected, InsertCursorAtEndOfEachLineSelected.ID, nls.localize('mutlicursor.insertAtEndOfEachLineSelected', "Create multiple cursors from selected lines"), {
+}, 'Add Cursor Below'));
+CommonEditorRegistry.registerEditorAction(new EditorActionDescriptor(InsertCursorAtEndOfEachLineSelected, InsertCursorAtEndOfEachLineSelected.ID, nls.localize('mutlicursor.insertAtEndOfEachLineSelected', "Create Multiple Cursors from Selected Lines"), {
 	context: ContextKey.EditorTextFocus,
 	primary: KeyMod.Shift | KeyMod.Alt | KeyCode.KEY_I
-}));
+}, 'Create Multiple Cursors from Selected Lines'));
