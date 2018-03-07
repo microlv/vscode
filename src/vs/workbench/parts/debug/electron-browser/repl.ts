@@ -3,192 +3,283 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import 'vs/css!./../browser/media/repl';
-import nls = require('vs/nls');
+import 'vs/css!vs/workbench/parts/debug/browser/media/repl';
+import * as nls from 'vs/nls';
+import uri from 'vs/base/common/uri';
+import { wireCancellationToken } from 'vs/base/common/async';
 import { TPromise } from 'vs/base/common/winjs.base';
-import errors = require('vs/base/common/errors');
-import lifecycle = require('vs/base/common/lifecycle');
-import actions = require('vs/base/common/actions');
-import builder = require('vs/base/browser/builder');
-import dom = require('vs/base/browser/dom');
-import platform = require('vs/base/common/platform');
-import tree = require('vs/base/parts/tree/browser/tree');
-import treeimpl = require('vs/base/parts/tree/browser/treeImpl');
-import { IEventService } from 'vs/platform/event/common/event';
-import { EventType, CompositeEvent } from 'vs/workbench/common/events';
-import viewer = require('vs/workbench/parts/debug/electron-browser/replViewer');
-import debug = require('vs/workbench/parts/debug/common/debug');
-import { Expression } from 'vs/workbench/parts/debug/common/debugModel';
-import debugactions = require('vs/workbench/parts/debug/browser/debugActions');
-import replhistory = require('vs/workbench/parts/debug/common/replHistory');
-import { Panel } from 'vs/workbench/browser/panel';
+import * as errors from 'vs/base/common/errors';
+import { IAction } from 'vs/base/common/actions';
+import { Dimension, Builder } from 'vs/base/browser/builder';
+import * as dom from 'vs/base/browser/dom';
+import { isMacintosh } from 'vs/base/common/platform';
+import { CancellationToken } from 'vs/base/common/cancellation';
+import { KeyCode } from 'vs/base/common/keyCodes';
+import { ITree, ITreeOptions } from 'vs/base/parts/tree/browser/tree';
+import { Context as SuggestContext } from 'vs/editor/contrib/suggest/suggest';
+import { SuggestController } from 'vs/editor/contrib/suggest/suggestController';
+import { ITextModel } from 'vs/editor/common/model';
+import { EditorContextKeys } from 'vs/editor/common/editorContextKeys';
+import { Position } from 'vs/editor/common/core/position';
+import * as modes from 'vs/editor/common/modes';
+import { registerEditorAction, ServicesAccessor, EditorAction, EditorCommand, registerEditorCommand } from 'vs/editor/browser/editorExtensions';
+import { IModelService } from 'vs/editor/common/services/modelService';
+import { MenuId } from 'vs/platform/actions/common/actions';
+import { ServiceCollection } from 'vs/platform/instantiation/common/serviceCollection';
+import { IContextKeyService, ContextKeyExpr } from 'vs/platform/contextkey/common/contextkey';
 import { ITelemetryService } from 'vs/platform/telemetry/common/telemetry';
-import { IContextViewService, IContextMenuService } from 'vs/platform/contextview/browser/contextView';
-import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
-import { IWorkspaceContextService } from 'vs/workbench/services/workspace/common/contextService';
+import { IInstantiationService, createDecorator } from 'vs/platform/instantiation/common/instantiation';
 import { IStorageService, StorageScope } from 'vs/platform/storage/common/storage';
-import { CommonKeybindings } from 'vs/base/common/keyCodes';
-import {IKeyboardEvent} from 'vs/base/browser/keyboardEvent';
+import { ReplExpressionsRenderer, ReplExpressionsController, ReplExpressionsDataSource, ReplExpressionsActionProvider, ReplExpressionsAccessibilityProvider } from 'vs/workbench/parts/debug/electron-browser/replViewer';
+import { ReplInputEditor } from 'vs/workbench/parts/debug/electron-browser/replEditor';
+import * as debug from 'vs/workbench/parts/debug/common/debug';
+import { ClearReplAction } from 'vs/workbench/parts/debug/browser/debugActions';
+import { ReplHistory } from 'vs/workbench/parts/debug/common/replHistory';
+import { Panel } from 'vs/workbench/browser/panel';
+import { IPanelService } from 'vs/workbench/services/panel/common/panelService';
+import { IEditorOptions } from 'vs/editor/common/config/editorOptions';
+import { IThemeService } from 'vs/platform/theme/common/themeService';
+import { clipboard } from 'electron';
+import { ICodeEditor } from 'vs/editor/browser/editorBrowser';
+import { WorkbenchTree } from 'vs/platform/list/browser/listService';
+import { memoize } from 'vs/base/common/decorators';
+import { dispose } from 'vs/base/common/lifecycle';
+import { OpenMode, ClickBehavior } from 'vs/base/parts/tree/browser/treeDefaults';
 
-const $ = dom.emmet;
+const $ = dom.$;
 
-const replTreeOptions: tree.ITreeOptions = {
-	indentPixels: 8,
+const replTreeOptions: ITreeOptions = {
 	twistiePixels: 20,
-	paddingOnRow: false,
 	ariaLabel: nls.localize('replAriaLabel', "Read Eval Print Loop Panel")
 };
 
 const HISTORY_STORAGE_KEY = 'debug.repl.history';
+const IPrivateReplService = createDecorator<IPrivateReplService>('privateReplService');
 
-export class Repl extends Panel {
+export interface IPrivateReplService {
+	_serviceBrand: any;
+	navigateHistory(previous: boolean): void;
+	acceptReplInput(): void;
+	getVisibleContent(): string;
+}
 
-	private static HALF_WIDTH_TYPICAL = 'n';
+export class Repl extends Panel implements IPrivateReplService {
+	public _serviceBrand: any;
 
-	private static HISTORY: replhistory.ReplHistory;
-	private static REFRESH_DELAY = 500; // delay in ms to refresh the repl for new elements to show
+	private static readonly HALF_WIDTH_TYPICAL = 'n';
 
-	private toDispose: lifecycle.IDisposable[];
-	private tree: tree.ITree;
-	private renderer: viewer.ReplExpressionsRenderer;
-	private characterWidthSurveyor: HTMLElement;
+	private static HISTORY: ReplHistory;
+	private static readonly REFRESH_DELAY = 500; // delay in ms to refresh the repl for new elements to show
+	private static readonly REPL_INPUT_INITIAL_HEIGHT = 19;
+	private static readonly REPL_INPUT_MAX_HEIGHT = 170;
+
+	private tree: ITree;
+	private renderer: ReplExpressionsRenderer;
+	private container: HTMLElement;
 	private treeContainer: HTMLElement;
-	private replInput: HTMLInputElement;
+	private replInput: ReplInputEditor;
+	private replInputContainer: HTMLElement;
 	private refreshTimeoutHandle: number;
-	private actions: actions.IAction[];
+	private actions: IAction[];
+	private dimension: Dimension;
+	private replInputHeight: number;
+	private model: ITextModel;
 
 	constructor(
 		@debug.IDebugService private debugService: debug.IDebugService,
-		@IContextMenuService private contextMenuService: IContextMenuService,
-		@IWorkspaceContextService private contextService: IWorkspaceContextService,
 		@ITelemetryService telemetryService: ITelemetryService,
 		@IInstantiationService private instantiationService: IInstantiationService,
-		@IContextViewService private contextViewService: IContextViewService,
 		@IStorageService private storageService: IStorageService,
-		@IEventService private eventService: IEventService
+		@IPanelService private panelService: IPanelService,
+		@IThemeService protected themeService: IThemeService,
+		@IModelService private modelService: IModelService,
+		@IContextKeyService private contextKeyService: IContextKeyService
 	) {
-		super(debug.REPL_ID, telemetryService);
+		super(debug.REPL_ID, telemetryService, themeService);
 
-		this.toDispose = [];
+		this.replInputHeight = Repl.REPL_INPUT_INITIAL_HEIGHT;
 		this.registerListeners();
 	}
 
 	private registerListeners(): void {
-		this.toDispose.push(this.debugService.getModel().onDidChangeReplElements(() => {
-			this.onReplElementsUpdated();
+		this.toUnbind.push(this.debugService.getModel().onDidChangeReplElements(() => {
+			this.refreshReplElements(this.debugService.getModel().getReplElements().length === 0);
 		}));
-		this.toDispose.push(this.eventService.addListener2(EventType.COMPOSITE_OPENED, (e: CompositeEvent) => {
-			if (e.compositeId === debug.REPL_ID) {
-				const elements = this.debugService.getModel().getReplElements();
-				if (elements.length > 0) {
-					return this.reveal(elements[elements.length - 1]);
-				}
-			}
-		}));
+		this.toUnbind.push(this.panelService.onDidPanelOpen(panel => this.refreshReplElements(true)));
 	}
 
-	private onReplElementsUpdated(): void {
-		if (this.tree) {
+	private refreshReplElements(noDelay: boolean): void {
+		if (this.tree && this.isVisible()) {
 			if (this.refreshTimeoutHandle) {
 				return; // refresh already triggered
 			}
 
+			const delay = noDelay ? 0 : Repl.REFRESH_DELAY;
 			this.refreshTimeoutHandle = setTimeout(() => {
 				this.refreshTimeoutHandle = null;
-
-				const scrollPosition = this.tree.getScrollPosition();
+				const previousScrollPosition = this.tree.getScrollPosition();
 				this.tree.refresh().then(() => {
-					if (scrollPosition === 0 || scrollPosition === 1) {
-						this.tree.setScrollPosition(1); // keep scrolling to the end unless user scrolled up
-					}
-
-					// If the last repl element has children - auto expand it #6019
-					const elements = this.debugService.getModel().getReplElements();
-					const lastElement = elements.length > 0 ? elements[elements.length - 1] : null;
-					if (lastElement instanceof Expression && lastElement.reference > 0) {
-						return this.tree.expand(elements[elements.length - 1]).then(() =>
-							this.tree.reveal(elements[elements.length - 1], 0)
-						);
+					if (previousScrollPosition === 1) {
+						// Only scroll if we were scrolled all the way down before tree refreshed #10486
+						this.tree.setScrollPosition(1);
 					}
 				}, errors.onUnexpectedError);
-			}, Repl.REFRESH_DELAY);
+			}, delay);
 		}
 	}
 
-	public create(parent: builder.Builder): TPromise<void> {
+	public create(parent: Builder): TPromise<void> {
 		super.create(parent);
-		const container = dom.append(parent.getHTMLElement(), $('.repl'));
-		this.treeContainer = dom.append(container, $('.repl-tree'));
-		const replInputContainer = dom.append(container, $('.repl-input-wrapper'));
-		this.replInput = <HTMLInputElement>dom.append(replInputContainer, $('input.repl-input'));
-		this.replInput.type = 'text';
+		this.container = dom.append(parent.getHTMLElement(), $('.repl'));
+		this.treeContainer = dom.append(this.container, $('.repl-tree'));
+		this.createReplInput(this.container);
 
-		this.toDispose.push(dom.addStandardDisposableListener(this.replInput, 'keydown', (e: IKeyboardEvent) => {
-			if (e.equals(CommonKeybindings.ENTER)) {
-				this.debugService.addReplExpression(this.replInput.value);
-				Repl.HISTORY.evaluated(this.replInput.value);
-				this.replInput.value = '';
-				e.preventDefault();
-			} else if (e.equals(CommonKeybindings.UP_ARROW) || e.equals(CommonKeybindings.DOWN_ARROW)) {
-				const historyInput = e.equals(CommonKeybindings.UP_ARROW) ? Repl.HISTORY.previous() : Repl.HISTORY.next();
-				if (historyInput) {
-					Repl.HISTORY.remember(this.replInput.value, e.equals(CommonKeybindings.UP_ARROW));
-					this.replInput.value = historyInput;
-					// always leave cursor at the end.
-					e.preventDefault();
-				}
-			}
-		}));
-		this.toDispose.push(dom.addStandardDisposableListener(this.replInput, dom.EventType.FOCUS, () => dom.addClass(replInputContainer, 'synthetic-focus')));
-		this.toDispose.push(dom.addStandardDisposableListener(this.replInput, dom.EventType.BLUR, () => dom.removeClass(replInputContainer, 'synthetic-focus')));
+		this.renderer = this.instantiationService.createInstance(ReplExpressionsRenderer);
+		const controller = this.instantiationService.createInstance(ReplExpressionsController, new ReplExpressionsActionProvider(this.instantiationService, this.replInput), MenuId.DebugConsoleContext, { openMode: OpenMode.SINGLE_CLICK, clickBehavior: ClickBehavior.ON_MOUSE_UP /* do not change, to preserve focus behaviour in input field */ });
+		controller.toFocusOnClick = this.replInput;
 
-		this.characterWidthSurveyor = dom.append(container, $('.surveyor'));
-		this.characterWidthSurveyor.textContent = Repl.HALF_WIDTH_TYPICAL;
-		for (let i = 0; i < 10; i++) {
-			this.characterWidthSurveyor.textContent += this.characterWidthSurveyor.textContent;
-		}
-		this.characterWidthSurveyor.style.fontSize = platform.isMacintosh ? '12px' : '14px';
-
-		this.renderer = this.instantiationService.createInstance(viewer.ReplExpressionsRenderer);
-		this.tree = new treeimpl.Tree(this.treeContainer, {
-			dataSource: new viewer.ReplExpressionsDataSource(this.debugService),
+		this.tree = this.instantiationService.createInstance(WorkbenchTree, this.treeContainer, {
+			dataSource: new ReplExpressionsDataSource(),
 			renderer: this.renderer,
-			accessibilityProvider: new viewer.ReplExpressionsAccessibilityProvider(),
-			controller: new viewer.ReplExpressionsController(this.debugService, this.contextMenuService, new viewer.ReplExpressionsActionProvider(this.instantiationService), this.replInput, false)
+			accessibilityProvider: new ReplExpressionsAccessibilityProvider(),
+			controller
 		}, replTreeOptions);
 
 		if (!Repl.HISTORY) {
-			Repl.HISTORY = new replhistory.ReplHistory(JSON.parse(this.storageService.get(HISTORY_STORAGE_KEY, StorageScope.WORKSPACE, '[]')));
+			Repl.HISTORY = new ReplHistory(JSON.parse(this.storageService.get(HISTORY_STORAGE_KEY, StorageScope.WORKSPACE, '[]')));
 		}
 
 		return this.tree.setInput(this.debugService.getModel());
 	}
 
-	public layout(dimension: builder.Dimension): void {
-		if (this.tree) {
-			this.renderer.setWidth(dimension.width - 25, this.characterWidthSurveyor.clientWidth / this.characterWidthSurveyor.textContent.length);
-			this.tree.layout(dimension.height - 22);
-			// refresh the tree because layout might require some elements be word wrapped differently
-			this.tree.refresh().done(undefined, errors.onUnexpectedError);
+	public setVisible(visible: boolean): TPromise<void> {
+		if (!visible) {
+			dispose(this.model);
+		} else {
+			this.model = this.modelService.createModel('', null, uri.parse(`${debug.DEBUG_SCHEME}:input`));
+			this.replInput.setModel(this.model);
 		}
+
+		return super.setVisible(visible);
+	}
+
+	private createReplInput(container: HTMLElement): void {
+		this.replInputContainer = dom.append(container, $('.repl-input-wrapper'));
+
+		const scopedContextKeyService = this.contextKeyService.createScoped(this.replInputContainer);
+		this.toUnbind.push(scopedContextKeyService);
+		debug.CONTEXT_IN_DEBUG_REPL.bindTo(scopedContextKeyService).set(true);
+		const onFirstReplLine = debug.CONTEXT_ON_FIRST_DEBUG_REPL_LINE.bindTo(scopedContextKeyService);
+		onFirstReplLine.set(true);
+		const onLastReplLine = debug.CONTEXT_ON_LAST_DEBUG_REPL_LINE.bindTo(scopedContextKeyService);
+		onLastReplLine.set(true);
+
+		const scopedInstantiationService = this.instantiationService.createChild(new ServiceCollection(
+			[IContextKeyService, scopedContextKeyService], [IPrivateReplService, this]));
+		this.replInput = scopedInstantiationService.createInstance(ReplInputEditor, this.replInputContainer, this.getReplInputOptions());
+
+		modes.SuggestRegistry.register({ scheme: debug.DEBUG_SCHEME }, {
+			triggerCharacters: ['.'],
+			provideCompletionItems: (model: ITextModel, position: Position, _context: modes.SuggestContext, token: CancellationToken): Thenable<modes.ISuggestResult> => {
+				const word = this.replInput.getModel().getWordAtPosition(position);
+				const overwriteBefore = word ? word.word.length : 0;
+				const text = this.replInput.getModel().getLineContent(position.lineNumber);
+				const focusedStackFrame = this.debugService.getViewModel().focusedStackFrame;
+				const frameId = focusedStackFrame ? focusedStackFrame.frameId : undefined;
+				const focusedProcess = this.debugService.getViewModel().focusedProcess;
+				const completions = focusedProcess ? focusedProcess.completions(frameId, text, position, overwriteBefore) : TPromise.as([]);
+				return wireCancellationToken(token, completions.then(suggestions => ({
+					suggestions
+				})));
+			}
+		});
+
+		this.toUnbind.push(this.replInput.onDidScrollChange(e => {
+			if (!e.scrollHeightChanged) {
+				return;
+			}
+			this.replInputHeight = Math.max(Repl.REPL_INPUT_INITIAL_HEIGHT, Math.min(Repl.REPL_INPUT_MAX_HEIGHT, e.scrollHeight, this.dimension.height));
+			this.layout(this.dimension);
+		}));
+		this.toUnbind.push(this.replInput.onDidChangeCursorPosition(e => {
+			onFirstReplLine.set(e.position.lineNumber === 1);
+			onLastReplLine.set(e.position.lineNumber === this.replInput.getModel().getLineCount());
+		}));
+
+		this.toUnbind.push(dom.addStandardDisposableListener(this.replInputContainer, dom.EventType.FOCUS, () => dom.addClass(this.replInputContainer, 'synthetic-focus')));
+		this.toUnbind.push(dom.addStandardDisposableListener(this.replInputContainer, dom.EventType.BLUR, () => dom.removeClass(this.replInputContainer, 'synthetic-focus')));
+	}
+
+	public navigateHistory(previous: boolean): void {
+		const historyInput = previous ? Repl.HISTORY.previous() : Repl.HISTORY.next();
+		if (historyInput) {
+			Repl.HISTORY.remember(this.replInput.getValue(), previous);
+			this.replInput.setValue(historyInput);
+			// always leave cursor at the end.
+			this.replInput.setPosition({ lineNumber: 1, column: historyInput.length + 1 });
+		}
+	}
+
+	public acceptReplInput(): void {
+		this.debugService.addReplExpression(this.replInput.getValue());
+		Repl.HISTORY.evaluated(this.replInput.getValue());
+		this.replInput.setValue('');
+		// Trigger a layout to shrink a potential multi line input
+		this.replInputHeight = Repl.REPL_INPUT_INITIAL_HEIGHT;
+		this.layout(this.dimension);
+	}
+
+	public getVisibleContent(): string {
+		let text = '';
+		const navigator = this.tree.getNavigator();
+		// skip first navigator element - the root node
+		while (navigator.next()) {
+			if (text) {
+				text += `\n`;
+			}
+			text += navigator.current().toString();
+		}
+
+		return text;
+	}
+
+	public layout(dimension: Dimension): void {
+		this.dimension = dimension;
+		if (this.tree) {
+			this.renderer.setWidth(dimension.width - 25, this.characterWidth);
+			const treeHeight = dimension.height - this.replInputHeight;
+			this.treeContainer.style.height = `${treeHeight}px`;
+			this.tree.layout(treeHeight);
+		}
+		this.replInputContainer.style.height = `${this.replInputHeight}px`;
+
+		this.replInput.layout({ width: dimension.width - 20, height: this.replInputHeight });
+	}
+
+	@memoize
+	private get characterWidth(): number {
+		const characterWidthSurveyor = dom.append(this.container, $('.surveyor'));
+		characterWidthSurveyor.textContent = Repl.HALF_WIDTH_TYPICAL;
+		for (let i = 0; i < 10; i++) {
+			characterWidthSurveyor.textContent += characterWidthSurveyor.textContent;
+		}
+		characterWidthSurveyor.style.fontSize = isMacintosh ? '12px' : '14px';
+
+		return characterWidthSurveyor.clientWidth / characterWidthSurveyor.textContent.length;
 	}
 
 	public focus(): void {
 		this.replInput.focus();
 	}
 
-	public reveal(element: debug.ITreeElement): TPromise<void> {
-		return this.tree.reveal(element);
-	}
-
-	public getActions(): actions.IAction[] {
+	public getActions(): IAction[] {
 		if (!this.actions) {
 			this.actions = [
-				this.instantiationService.createInstance(debugactions.ClearReplAction, debugactions.ClearReplAction.ID, debugactions.ClearReplAction.LABEL)
+				this.instantiationService.createInstance(ClearReplAction, ClearReplAction.ID, ClearReplAction.LABEL)
 			];
 
 			this.actions.forEach(a => {
-				this.toDispose.push(a);
+				this.toUnbind.push(a);
 			});
 		}
 
@@ -196,13 +287,141 @@ export class Repl extends Panel {
 	}
 
 	public shutdown(): void {
-		this.storageService.store(HISTORY_STORAGE_KEY, JSON.stringify(Repl.HISTORY.save()), StorageScope.WORKSPACE);
+		const replHistory = Repl.HISTORY.save();
+		if (replHistory.length) {
+			this.storageService.store(HISTORY_STORAGE_KEY, JSON.stringify(replHistory), StorageScope.WORKSPACE);
+		} else {
+			this.storageService.remove(HISTORY_STORAGE_KEY, StorageScope.WORKSPACE);
+		}
+	}
+
+	private getReplInputOptions(): IEditorOptions {
+		return {
+			wordWrap: 'on',
+			overviewRulerLanes: 0,
+			glyphMargin: false,
+			lineNumbers: 'off',
+			folding: false,
+			selectOnLineNumbers: false,
+			selectionHighlight: false,
+			scrollbar: {
+				horizontal: 'hidden'
+			},
+			lineDecorationsWidth: 0,
+			scrollBeyondLastLine: false,
+			renderLineHighlight: 'none',
+			fixedOverflowWidgets: true,
+			acceptSuggestionOnEnter: 'smart',
+			minimap: {
+				enabled: false
+			}
+		};
 	}
 
 	public dispose(): void {
-		// destroy container
-		this.toDispose = lifecycle.dispose(this.toDispose);
-
+		this.replInput.dispose();
 		super.dispose();
 	}
 }
+
+class ReplHistoryPreviousAction extends EditorAction {
+
+	constructor() {
+		super({
+			id: 'repl.action.historyPrevious',
+			label: nls.localize('actions.repl.historyPrevious', "History Previous"),
+			alias: 'History Previous',
+			precondition: debug.CONTEXT_IN_DEBUG_REPL,
+			kbOpts: {
+				kbExpr: ContextKeyExpr.and(EditorContextKeys.textFocus, debug.CONTEXT_ON_FIRST_DEBUG_REPL_LINE),
+				primary: KeyCode.UpArrow,
+				weight: 50
+			},
+			menuOpts: {
+				group: 'debug'
+			}
+		});
+	}
+
+	public run(accessor: ServicesAccessor, editor: ICodeEditor): void | TPromise<void> {
+		accessor.get(IPrivateReplService).navigateHistory(true);
+	}
+}
+
+class ReplHistoryNextAction extends EditorAction {
+
+	constructor() {
+		super({
+			id: 'repl.action.historyNext',
+			label: nls.localize('actions.repl.historyNext', "History Next"),
+			alias: 'History Next',
+			precondition: debug.CONTEXT_IN_DEBUG_REPL,
+			kbOpts: {
+				kbExpr: ContextKeyExpr.and(EditorContextKeys.textFocus, debug.CONTEXT_ON_LAST_DEBUG_REPL_LINE),
+				primary: KeyCode.DownArrow,
+				weight: 50
+			},
+			menuOpts: {
+				group: 'debug'
+			}
+		});
+	}
+
+	public run(accessor: ServicesAccessor, editor: ICodeEditor): void | TPromise<void> {
+		accessor.get(IPrivateReplService).navigateHistory(false);
+	}
+}
+
+class AcceptReplInputAction extends EditorAction {
+
+	constructor() {
+		super({
+			id: 'repl.action.acceptInput',
+			label: nls.localize({ key: 'actions.repl.acceptInput', comment: ['Apply input from the debug console input box'] }, "REPL Accept Input"),
+			alias: 'REPL Accept Input',
+			precondition: debug.CONTEXT_IN_DEBUG_REPL,
+			kbOpts: {
+				kbExpr: EditorContextKeys.textFocus,
+				primary: KeyCode.Enter
+			}
+		});
+	}
+
+	public run(accessor: ServicesAccessor, editor: ICodeEditor): void | TPromise<void> {
+		SuggestController.get(editor).acceptSelectedSuggestion();
+		accessor.get(IPrivateReplService).acceptReplInput();
+	}
+}
+
+export class ReplCopyAllAction extends EditorAction {
+
+	constructor() {
+		super({
+			id: 'repl.action.copyAll',
+			label: nls.localize('actions.repl.copyAll', "Debug: Console Copy All"),
+			alias: 'Debug Console Copy All',
+			precondition: debug.CONTEXT_IN_DEBUG_REPL,
+		});
+	}
+
+	public run(accessor: ServicesAccessor, editor: ICodeEditor): void | TPromise<void> {
+		clipboard.writeText(accessor.get(IPrivateReplService).getVisibleContent());
+	}
+}
+
+registerEditorAction(ReplHistoryPreviousAction);
+registerEditorAction(ReplHistoryNextAction);
+registerEditorAction(AcceptReplInputAction);
+registerEditorAction(ReplCopyAllAction);
+
+const SuggestCommand = EditorCommand.bindToContribution<SuggestController>(SuggestController.get);
+registerEditorCommand(new SuggestCommand({
+	id: 'repl.action.acceptSuggestion',
+	precondition: ContextKeyExpr.and(debug.CONTEXT_IN_DEBUG_REPL, SuggestContext.Visible),
+	handler: x => x.acceptSelectedSuggestion(),
+	kbOpts: {
+		weight: 50,
+		kbExpr: EditorContextKeys.textFocus,
+		primary: KeyCode.RightArrow
+	}
+}));

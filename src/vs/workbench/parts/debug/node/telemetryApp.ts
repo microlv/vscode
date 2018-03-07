@@ -3,8 +3,6 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-'use strict';
-
 import { Server } from 'vs/base/parts/ipc/node/ipc.cp';
 import { AppInsightsAppender } from 'vs/platform/telemetry/node/appInsightsAppender';
 import { TelemetryAppenderChannel } from 'vs/platform/telemetry/common/telemetryIpc';

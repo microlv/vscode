@@ -4,71 +4,99 @@
  *--------------------------------------------------------------------------------------------*/
 
 import Event, { Emitter } from 'vs/base/common/event';
-import debug = require('vs/workbench/parts/debug/common/debug');
+import { CONTEXT_EXPRESSION_SELECTED, IViewModel, IStackFrame, IProcess, IThread, IExpression, IFunctionBreakpoint, CONTEXT_BREAKPOINT_SELECTED } from 'vs/workbench/parts/debug/common/debug';
+import { IContextKeyService, IContextKey } from 'vs/platform/contextkey/common/contextkey';
 
-export class ViewModel implements debug.IViewModel {
+export class ViewModel implements IViewModel {
 
-	private focusedStackFrame: debug.IStackFrame;
-	private focusedThread: debug.IThread;
-	private selectedExpression: debug.IExpression;
-	private selectedFunctionBreakpoint: debug.IFunctionBreakpoint;
-	private _onDidFocusStackFrame: Emitter<debug.IStackFrame>;
-	private _onDidSelectExpression: Emitter<debug.IExpression>;
-	private _onDidSelectFunctionBreakpoint: Emitter<debug.IFunctionBreakpoint>;
-	public changedWorkbenchViewState: boolean;
+	private _focusedStackFrame: IStackFrame;
+	private _focusedProcess: IProcess;
+	private _focusedThread: IThread;
+	private selectedExpression: IExpression;
+	private selectedFunctionBreakpoint: IFunctionBreakpoint;
+	private _onDidFocusProcess: Emitter<IProcess | undefined>;
+	private _onDidFocusStackFrame: Emitter<{ stackFrame: IStackFrame, explicit: boolean }>;
+	private _onDidSelectExpression: Emitter<IExpression>;
+	private multiProcessView: boolean;
+	private expressionSelectedContextKey: IContextKey<boolean>;
+	private breakpointSelectedContextKey: IContextKey<boolean>;
 
-	constructor() {
-		this._onDidFocusStackFrame = new Emitter<debug.IStackFrame>();
-		this._onDidSelectExpression = new Emitter<debug.IExpression>();
-		this._onDidSelectFunctionBreakpoint = new Emitter<debug.IFunctionBreakpoint>();
-		this.changedWorkbenchViewState = false;
+	constructor(contextKeyService: IContextKeyService) {
+		this._onDidFocusProcess = new Emitter<IProcess | undefined>();
+		this._onDidFocusStackFrame = new Emitter<{ stackFrame: IStackFrame, explicit: boolean }>();
+		this._onDidSelectExpression = new Emitter<IExpression>();
+		this.multiProcessView = false;
+		this.expressionSelectedContextKey = CONTEXT_EXPRESSION_SELECTED.bindTo(contextKeyService);
+		this.breakpointSelectedContextKey = CONTEXT_BREAKPOINT_SELECTED.bindTo(contextKeyService);
 	}
 
 	public getId(): string {
 		return 'root';
 	}
 
-	public getFocusedStackFrame(): debug.IStackFrame {
-		return this.focusedStackFrame;
+	public get focusedProcess(): IProcess {
+		return this._focusedProcess;
 	}
 
-	public setFocusedStackFrame(focusedStackFrame: debug.IStackFrame, focusedThread: debug.IThread): void {
-		this.focusedStackFrame = focusedStackFrame;
-		this.focusedThread = focusedThread;
-		this._onDidFocusStackFrame.fire(focusedStackFrame);
+	public get focusedThread(): IThread {
+		return this._focusedStackFrame ? this._focusedStackFrame.thread : (this._focusedProcess ? this._focusedProcess.getAllThreads().pop() : null);
 	}
 
-	public get onDidFocusStackFrame(): Event<debug.IStackFrame> {
+	public get focusedStackFrame(): IStackFrame {
+		return this._focusedStackFrame;
+	}
+
+	public setFocus(stackFrame: IStackFrame, thread: IThread, process: IProcess, explicit: boolean): void {
+		let shouldEmit = this._focusedProcess !== process || this._focusedThread !== thread || this._focusedStackFrame !== stackFrame;
+
+		if (this._focusedProcess !== process) {
+			this._focusedProcess = process;
+			this._onDidFocusProcess.fire(process);
+		}
+		this._focusedThread = thread;
+		this._focusedStackFrame = stackFrame;
+
+		if (shouldEmit) {
+			this._onDidFocusStackFrame.fire({ stackFrame, explicit });
+		}
+	}
+
+	public get onDidFocusProcess(): Event<IProcess> {
+		return this._onDidFocusProcess.event;
+	}
+
+	public get onDidFocusStackFrame(): Event<{ stackFrame: IStackFrame, explicit: boolean }> {
 		return this._onDidFocusStackFrame.event;
 	}
 
-	public getFocusedThreadId(): number {
-		return this.focusedThread ? this.focusedThread.threadId : 0;
-	}
-
-	public getSelectedExpression(): debug.IExpression {
+	public getSelectedExpression(): IExpression {
 		return this.selectedExpression;
 	}
 
-	public setSelectedExpression(expression: debug.IExpression) {
+	public setSelectedExpression(expression: IExpression) {
 		this.selectedExpression = expression;
+		this.expressionSelectedContextKey.set(!!expression);
 		this._onDidSelectExpression.fire(expression);
 	}
 
-	public get onDidSelectExpression(): Event<debug.IExpression> {
+	public get onDidSelectExpression(): Event<IExpression> {
 		return this._onDidSelectExpression.event;
 	}
 
-	public getSelectedFunctionBreakpoint(): debug.IFunctionBreakpoint {
+	public getSelectedFunctionBreakpoint(): IFunctionBreakpoint {
 		return this.selectedFunctionBreakpoint;
 	}
 
-	public setSelectedFunctionBreakpoint(functionBreakpoint: debug.IFunctionBreakpoint): void {
+	public setSelectedFunctionBreakpoint(functionBreakpoint: IFunctionBreakpoint): void {
 		this.selectedFunctionBreakpoint = functionBreakpoint;
-		this._onDidSelectFunctionBreakpoint.fire(functionBreakpoint);
+		this.breakpointSelectedContextKey.set(!!functionBreakpoint);
 	}
 
-	public get onDidSelectFunctionBreakpoint(): Event<debug.IFunctionBreakpoint> {
-		return this._onDidSelectFunctionBreakpoint.event;
+	public isMultiProcessView(): boolean {
+		return this.multiProcessView;
+	}
+
+	public setMultiProcessView(isMultiProcessView: boolean): void {
+		this.multiProcessView = isMultiProcessView;
 	}
 }

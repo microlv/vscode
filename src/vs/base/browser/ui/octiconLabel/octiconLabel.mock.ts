@@ -3,10 +3,10 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 import octiconLabel = require('vs/base/browser/ui/octiconLabel/octiconLabel');
-import {escape} from 'vs/base/common/strings';
+import { escape } from 'vs/base/common/strings';
 
-function expand(text:string): string {
-	return text;
+function render(text: string): string {
+	return escape(text);
 }
 
 class MockOcticonLabel {
@@ -18,16 +18,13 @@ class MockOcticonLabel {
 	}
 
 	set text(text: string) {
-		let innerHTML = text || '';
-		innerHTML = escape(innerHTML);
-		innerHTML = expand(innerHTML);
-		this._container.innerHTML = innerHTML;
+		this._container.innerHTML = render(text || '');
 	}
 
 }
 
 var mock: typeof octiconLabel = {
-	expand: expand,
+	renderOcticons: render,
 	OcticonLabel: <any>MockOcticonLabel
 };
 export = mock;

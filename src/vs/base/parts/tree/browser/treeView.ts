@@ -18,21 +18,18 @@ import Model = require('vs/base/parts/tree/browser/treeModel');
 import dnd = require('./treeDnd');
 import { ArrayIterator, MappedIterator } from 'vs/base/common/iterator';
 import { ScrollableElement } from 'vs/base/browser/ui/scrollbar/scrollableElement';
-import {ScrollbarVisibility} from 'vs/base/common/scrollable';
-import { HeightMap } from 'vs/base/parts/tree/browser/treeViewModel';
+import { ScrollbarVisibility } from 'vs/base/common/scrollable';
+import { HeightMap, IViewItem } from 'vs/base/parts/tree/browser/treeViewModel';
 import _ = require('vs/base/parts/tree/browser/tree');
-import { IViewItem } from 'vs/base/parts/tree/browser/treeViewModel';
-import {KeyCode} from 'vs/base/common/keyCodes';
+import { KeyCode } from 'vs/base/common/keyCodes';
+import Event, { Emitter } from 'vs/base/common/event';
+import { IDomNodePagePosition } from 'vs/base/browser/dom';
+import { DataTransfers } from 'vs/base/browser/dnd';
 
 export interface IRow {
 	element: HTMLElement;
 	templateId: string;
 	templateData: any;
-}
-
-function getLastScrollTime(element: HTMLElement): number {
-	var value = element.getAttribute('last-scroll-time');
-	return value ? parseInt(value, 10) : 0;
 }
 
 function removeFromParent(element: HTMLElement): void {
@@ -45,19 +42,17 @@ function removeFromParent(element: HTMLElement): void {
 
 export class RowCache implements Lifecycle.IDisposable {
 
-	private _cache: { [templateId:string]: IRow[]; };
-	private scrollingRow: IRow;
+	private _cache: { [templateId: string]: IRow[]; };
 
 	constructor(private context: _.ITreeContext) {
 		this._cache = { '': [] };
-		this.scrollingRow = null;
 	}
 
 	public alloc(templateId: string): IRow {
 		var result = this.cache(templateId).pop();
 
 		if (!result) {
-			var content =  document.createElement('div');
+			var content = document.createElement('div');
 			content.className = 'content';
 
 			var row = document.createElement('div');
@@ -74,32 +69,8 @@ export class RowCache implements Lifecycle.IDisposable {
 	}
 
 	public release(templateId: string, row: IRow): void {
-		var lastScrollTime = getLastScrollTime(row.element);
-
-		if (!lastScrollTime) {
-			removeFromParent(row.element);
-			this.cache(templateId).push(row);
-			return;
-		}
-
-		if (this.scrollingRow) {
-			var lastKnownScrollTime = getLastScrollTime(this.scrollingRow.element);
-
-			if (lastKnownScrollTime > lastScrollTime) {
-				removeFromParent(row.element);
-				this.cache(templateId).push(row);
-				return;
-			}
-
-			if (this.scrollingRow.element.parentElement) {
-				removeFromParent(this.scrollingRow.element);
-				DOM.removeClass(this.scrollingRow.element, 'scrolling');
-				this.cache(this.scrollingRow.templateId).push(this.scrollingRow);
-			}
-		}
-
-		this.scrollingRow = row;
-		DOM.addClass(this.scrollingRow.element, 'scrolling');
+		removeFromParent(row.element);
+		this.cache(templateId).push(row);
 	}
 
 	private cache(templateId: string): IRow[] {
@@ -117,11 +88,6 @@ export class RowCache implements Lifecycle.IDisposable {
 
 				delete this._cache[templateId];
 			});
-		}
-
-		if (this.scrollingRow) {
-			this.context.renderer.disposeTemplate(this.context.tree, this.scrollingRow.templateId, this.scrollingRow.templateData);
-			this.scrollingRow = null;
 		}
 	}
 
@@ -146,12 +112,12 @@ export class ViewItem implements IViewItem {
 
 	public top: number;
 	public height: number;
-	public onDragStart: (e: DragEvent)=>void;
+	public onDragStart: (e: DragEvent) => void;
 
 	public needsRender: boolean;
 	public uri: string;
 	public unbindDragStart: Lifecycle.IDisposable;
-	public loadingPromise: WinJS.Promise;
+	public loadingTimer: number;
 
 	public _styles: any;
 	private _draggable: boolean;
@@ -232,25 +198,26 @@ export class ViewItem implements IViewItem {
 
 		// ARIA
 		this.element.setAttribute('role', 'treeitem');
+		const accessibility = this.context.accessibilityProvider;
+		const ariaLabel = accessibility.getAriaLabel(this.context.tree, this.model.getElement());
+		if (ariaLabel) {
+			this.element.setAttribute('aria-label', ariaLabel);
+		}
+		if (accessibility.getPosInSet && accessibility.getSetSize) {
+			this.element.setAttribute('aria-setsize', accessibility.getSetSize());
+			this.element.setAttribute('aria-posinset', accessibility.getPosInSet(this.context.tree, this.model.getElement()));
+		}
 		if (this.model.hasTrait('focused')) {
 			const base64Id = strings.safeBtoa(this.model.id);
-			const ariaLabel = this.context.accessibilityProvider.getAriaLabel(this.context.tree, this.model.getElement());
 
 			this.element.setAttribute('aria-selected', 'true');
 			this.element.setAttribute('id', base64Id);
-			if (ariaLabel) {
-				this.element.setAttribute('aria-label', ariaLabel);
-			} else {
-				this.element.setAttribute('aria-labelledby', base64Id); // force screen reader to compute label from children (helps NVDA at least)
-			}
 		} else {
 			this.element.setAttribute('aria-selected', 'false');
 			this.element.removeAttribute('id');
-			this.element.removeAttribute('aria-label');
-			this.element.removeAttribute('aria-labelledby');
 		}
 		if (this.model.hasChildren()) {
-			this.element.setAttribute('aria-expanded', String(this.model.isExpanded()));
+			this.element.setAttribute('aria-expanded', String(!!this.model.isExpanded()));
 		} else {
 			this.element.removeAttribute('aria-expanded');
 		}
@@ -260,7 +227,7 @@ export class ViewItem implements IViewItem {
 			this.element.style.paddingLeft = this.context.options.twistiePixels + ((this.model.getDepth() - 1) * this.context.options.indentPixels) + 'px';
 		} else {
 			this.element.style.paddingLeft = ((this.model.getDepth() - 1) * this.context.options.indentPixels) + 'px';
-			(<HTMLElement> this.row.element.firstElementChild).style.paddingLeft = this.context.options.twistiePixels + 'px';
+			(<HTMLElement>this.row.element.firstElementChild).style.paddingLeft = this.context.options.twistiePixels + 'px';
 		}
 
 		var uri = this.context.dnd.getDragURI(this.context.tree, this.model.getElement());
@@ -292,7 +259,7 @@ export class ViewItem implements IViewItem {
 			this.row = this.context.cache.alloc(this.templateId);
 
 			// used in reverse lookup from HTMLElement to Item
-			(<any> this.element)[TreeView.BINDING] = this;
+			(<any>this.element)[TreeView.BINDING] = this;
 		}
 
 		if (this.element.parentElement) {
@@ -325,7 +292,7 @@ export class ViewItem implements IViewItem {
 
 		this.uri = null;
 
-		(<any> this.element)[TreeView.BINDING] = null;
+		(<any>this.element)[TreeView.BINDING] = null;
 		this.context.cache.release(this.templateId, this.row);
 		this.row = null;
 	}
@@ -398,6 +365,9 @@ export class TreeView extends HeightMap {
 	static BINDING = 'monaco-tree-row';
 	static LOADING_DECORATION_DELAY = 800;
 
+	private static counter: number = 0;
+	private instance: number;
+
 	private static currentExternalDragAndDropData: _.IDragAndDropData = null;
 
 	private context: IViewContext;
@@ -407,11 +377,11 @@ export class TreeView extends HeightMap {
 	private viewListeners: Lifecycle.IDisposable[];
 	private domNode: HTMLElement;
 	private wrapper: HTMLElement;
+	private styleElement: HTMLStyleElement;
 	private rowsContainer: HTMLElement;
 	private scrollableElement: ScrollableElement;
-	private wrapperGesture: Touch.Gesture;
 	private msGesture: MSGesture;
-	private lastPointerType:string;
+	private lastPointerType: string;
 	private lastClickTimeStamp: number = 0;
 
 	private lastRenderTop: number;
@@ -421,9 +391,7 @@ export class TreeView extends HeightMap {
 	private items: { [id: string]: ViewItem; };
 
 	private isRefreshing = false;
-	private refreshingPreviousChildrenIds: { [id:string]:string[] } = {};
-
-	private dragAndDropListeners: { (): void; }[];
+	private refreshingPreviousChildrenIds: { [id: string]: string[] } = {};
 	private currentDragAndDropData: _.IDragAndDropData;
 	private currentDropElement: any;
 	private currentDropElementReaction: _.IDragOverReaction;
@@ -440,8 +408,17 @@ export class TreeView extends HeightMap {
 	private highlightedItemWasDraggable: boolean;
 	private onHiddenScrollTop: number;
 
+	private _onDOMFocus: Emitter<void> = new Emitter<void>();
+	get onDOMFocus(): Event<void> { return this._onDOMFocus.event; }
+
+	private _onDOMBlur: Emitter<void> = new Emitter<void>();
+	get onDOMBlur(): Event<void> { return this._onDOMBlur.event; }
+
 	constructor(context: _.ITreeContext, container: HTMLElement) {
 		super();
+
+		TreeView.counter++;
+		this.instance = TreeView.counter;
 
 		this.context = {
 			dataSource: context.dataSource,
@@ -458,14 +435,16 @@ export class TreeView extends HeightMap {
 
 		this.modelListeners = [];
 		this.viewListeners = [];
-		this.dragAndDropListeners = [];
 
 		this.model = null;
 		this.items = {};
 
 		this.domNode = document.createElement('div');
-		this.domNode.className = 'monaco-tree no-focused-item';
-		this.domNode.tabIndex = 0;
+		this.domNode.className = `monaco-tree no-focused-item monaco-tree-instance-${this.instance}`;
+		// to allow direct tabbing into the tree instead of first focusing the tree
+		this.domNode.tabIndex = context.options.preventRootFocus ? -1 : 0;
+
+		this.styleElement = DOM.createStyleSheet(this.domNode);
 
 		// ARIA
 		this.domNode.setAttribute('role', 'tree');
@@ -477,10 +456,6 @@ export class TreeView extends HeightMap {
 			DOM.addClass(this.domNode, 'focused');
 		}
 
-		if (this.context.options.bare) {
-			DOM.addClass(this.domNode, 'bare');
-		}
-
 		if (!this.context.options.paddingOnRow) {
 			DOM.addClass(this.domNode, 'no-row-padding');
 		}
@@ -488,30 +463,31 @@ export class TreeView extends HeightMap {
 		this.wrapper = document.createElement('div');
 		this.wrapper.className = 'monaco-tree-wrapper';
 		this.scrollableElement = new ScrollableElement(this.wrapper, {
-			canUseTranslate3d: false,
+			alwaysConsumeMouseWheel: true,
 			horizontal: ScrollbarVisibility.Hidden,
 			vertical: (typeof context.options.verticalScrollMode !== 'undefined' ? context.options.verticalScrollMode : ScrollbarVisibility.Auto),
-			useShadows: context.options.useShadows,
-			saveLastScrollTimeOnClassName: 'monaco-tree-row'
+			useShadows: context.options.useShadows
 		});
 		this.scrollableElement.onScroll((e) => {
 			this.render(e.scrollTop, e.height);
-			this.emit('scroll', e); // TODO@Joao: is anyone interested in this event?
 		});
 
-		if(Browser.isIE11orEarlier) {
+		if (Browser.isIE) {
 			this.wrapper.style.msTouchAction = 'none';
 			this.wrapper.style.msContentZooming = 'none';
 		} else {
-			this.wrapperGesture = new Touch.Gesture(this.wrapper);
+			Touch.Gesture.addTarget(this.wrapper);
 		}
 
 		this.rowsContainer = document.createElement('div');
 		this.rowsContainer.className = 'monaco-tree-rows';
+		if (context.options.showTwistie) {
+			this.rowsContainer.className += ' show-twisties';
+		}
 
 		var focusTracker = DOM.trackFocus(this.domNode);
-		focusTracker.addFocusListener(() => this.onFocus());
-		focusTracker.addBlurListener(() => this.onBlur());
+		this.viewListeners.push(focusTracker.onDidFocus(() => this.onFocus()));
+		this.viewListeners.push(focusTracker.onDidBlur(() => this.onBlur()));
 		this.viewListeners.push(focusTracker);
 
 		this.viewListeners.push(DOM.addDisposableListener(this.domNode, 'keydown', (e) => this.onKeyDown(e)));
@@ -519,16 +495,17 @@ export class TreeView extends HeightMap {
 		this.viewListeners.push(DOM.addDisposableListener(this.domNode, 'mousedown', (e) => this.onMouseDown(e)));
 		this.viewListeners.push(DOM.addDisposableListener(this.domNode, 'mouseup', (e) => this.onMouseUp(e)));
 		this.viewListeners.push(DOM.addDisposableListener(this.wrapper, 'click', (e) => this.onClick(e)));
+		this.viewListeners.push(DOM.addDisposableListener(this.wrapper, 'auxclick', (e) => this.onClick(e))); // >= Chrome 56
 		this.viewListeners.push(DOM.addDisposableListener(this.domNode, 'contextmenu', (e) => this.onContextMenu(e)));
 		this.viewListeners.push(DOM.addDisposableListener(this.wrapper, Touch.EventType.Tap, (e) => this.onTap(e)));
 		this.viewListeners.push(DOM.addDisposableListener(this.wrapper, Touch.EventType.Change, (e) => this.onTouchChange(e)));
 
-		if(Browser.isIE11orEarlier) {
+		if (Browser.isIE) {
 			this.viewListeners.push(DOM.addDisposableListener(this.wrapper, 'MSPointerDown', (e) => this.onMsPointerDown(e)));
 			this.viewListeners.push(DOM.addDisposableListener(this.wrapper, 'MSGestureTap', (e) => this.onMsGestureTap(e)));
 
 			// these events come too fast, we throttle them
-			this.viewListeners.push(DOM.addDisposableThrottledListener<IThrottledGestureEvent>(this.wrapper, 'MSGestureChange', (e) => this.onThrottledMsGestureChange(e), (lastEvent:IThrottledGestureEvent, event:MSGestureEvent): IThrottledGestureEvent => {
+			this.viewListeners.push(DOM.addDisposableThrottledListener<IThrottledGestureEvent>(this.wrapper, 'MSGestureChange', (e) => this.onThrottledMsGestureChange(e), (lastEvent: IThrottledGestureEvent, event: MSGestureEvent): IThrottledGestureEvent => {
 				event.stopPropagation();
 				event.preventDefault();
 
@@ -544,7 +521,7 @@ export class TreeView extends HeightMap {
 		}
 
 		this.viewListeners.push(DOM.addDisposableListener(window, 'dragover', (e) => this.onDragOver(e)));
-		this.viewListeners.push(DOM.addDisposableListener(window, 'drop', (e) => this.onDrop(e)));
+		this.viewListeners.push(DOM.addDisposableListener(this.wrapper, 'drop', (e) => this.onDrop(e)));
 		this.viewListeners.push(DOM.addDisposableListener(window, 'dragend', (e) => this.onDragEnd(e)));
 		this.viewListeners.push(DOM.addDisposableListener(window, 'dragleave', (e) => this.onDragOver(e)));
 
@@ -570,6 +547,80 @@ export class TreeView extends HeightMap {
 		this.layout();
 
 		this.setupMSGesture();
+
+		this.applyStyles(context.options);
+	}
+
+	public applyStyles(styles: _.ITreeStyles): void {
+		const content: string[] = [];
+
+		if (styles.listFocusBackground) {
+			content.push(`.monaco-tree.monaco-tree-instance-${this.instance}.focused .monaco-tree-rows > .monaco-tree-row.focused:not(.highlighted) { background-color: ${styles.listFocusBackground}; }`);
+		}
+
+		if (styles.listFocusForeground) {
+			content.push(`.monaco-tree.monaco-tree-instance-${this.instance}.focused .monaco-tree-rows > .monaco-tree-row.focused:not(.highlighted) { color: ${styles.listFocusForeground}; }`);
+		}
+
+		if (styles.listActiveSelectionBackground) {
+			content.push(`.monaco-tree.monaco-tree-instance-${this.instance}.focused .monaco-tree-rows > .monaco-tree-row.selected:not(.highlighted) { background-color: ${styles.listActiveSelectionBackground}; }`);
+		}
+
+		if (styles.listActiveSelectionForeground) {
+			content.push(`.monaco-tree.monaco-tree-instance-${this.instance}.focused .monaco-tree-rows > .monaco-tree-row.selected:not(.highlighted) { color: ${styles.listActiveSelectionForeground}; }`);
+		}
+
+		if (styles.listFocusAndSelectionBackground) {
+			content.push(`
+				.monaco-tree-drag-image,
+				.monaco-tree.monaco-tree-instance-${this.instance}.focused .monaco-tree-rows > .monaco-tree-row.focused.selected:not(.highlighted) { background-color: ${styles.listFocusAndSelectionBackground}; }
+			`);
+		}
+
+		if (styles.listFocusAndSelectionForeground) {
+			content.push(`
+				.monaco-tree-drag-image,
+				.monaco-tree.monaco-tree-instance-${this.instance}.focused .monaco-tree-rows > .monaco-tree-row.focused.selected:not(.highlighted) { color: ${styles.listFocusAndSelectionForeground}; }
+			`);
+		}
+
+		if (styles.listInactiveSelectionBackground) {
+			content.push(`.monaco-tree.monaco-tree-instance-${this.instance} .monaco-tree-rows > .monaco-tree-row.selected:not(.highlighted) { background-color: ${styles.listInactiveSelectionBackground}; }`);
+		}
+
+		if (styles.listInactiveSelectionForeground) {
+			content.push(`.monaco-tree.monaco-tree-instance-${this.instance} .monaco-tree-rows > .monaco-tree-row.selected:not(.highlighted) { color: ${styles.listInactiveSelectionForeground}; }`);
+		}
+
+		if (styles.listHoverBackground) {
+			content.push(`.monaco-tree.monaco-tree-instance-${this.instance} .monaco-tree-rows > .monaco-tree-row:hover:not(.highlighted):not(.selected):not(.focused) { background-color: ${styles.listHoverBackground}; }`);
+		}
+
+		if (styles.listHoverForeground) {
+			content.push(`.monaco-tree.monaco-tree-instance-${this.instance} .monaco-tree-rows > .monaco-tree-row:hover:not(.highlighted):not(.selected):not(.focused) { color: ${styles.listHoverForeground}; }`);
+		}
+
+		if (styles.listDropBackground) {
+			content.push(`
+				.monaco-tree.monaco-tree-instance-${this.instance} .monaco-tree-wrapper.drop-target,
+				.monaco-tree.monaco-tree-instance-${this.instance} .monaco-tree-rows > .monaco-tree-row.drop-target { background-color: ${styles.listDropBackground} !important; color: inherit !important; }
+			`);
+		}
+
+		if (styles.listFocusOutline) {
+			content.push(`
+				.monaco-tree-drag-image																															{ border: 1px solid ${styles.listFocusOutline}; background: #000; }
+				.monaco-tree.monaco-tree-instance-${this.instance} .monaco-tree-rows > .monaco-tree-row 														{ border: 1px solid transparent; }
+				.monaco-tree.monaco-tree-instance-${this.instance}.focused .monaco-tree-rows > .monaco-tree-row.focused:not(.highlighted) 						{ border: 1px dotted ${styles.listFocusOutline}; }
+				.monaco-tree.monaco-tree-instance-${this.instance}.focused .monaco-tree-rows > .monaco-tree-row.selected:not(.highlighted) 						{ border: 1px solid ${styles.listFocusOutline}; }
+				.monaco-tree.monaco-tree-instance-${this.instance} .monaco-tree-rows > .monaco-tree-row.selected:not(.highlighted)  							{ border: 1px solid ${styles.listFocusOutline}; }
+				.monaco-tree.monaco-tree-instance-${this.instance} .monaco-tree-rows > .monaco-tree-row:hover:not(.highlighted):not(.selected):not(.focused)  	{ border: 1px dashed ${styles.listFocusOutline}; }
+				.monaco-tree.monaco-tree-instance-${this.instance} .monaco-tree-wrapper.drop-target,
+				.monaco-tree.monaco-tree-instance-${this.instance} .monaco-tree-rows > .monaco-tree-row.drop-target												{ border: 1px dashed ${styles.listFocusOutline}; }
+			`);
+		}
+
+		this.styleElement.innerHTML = content.join('\n');
 	}
 
 	protected createViewItem(item: Model.Item): IViewItem {
@@ -599,7 +650,7 @@ export class TreeView extends HeightMap {
 	}
 
 	private setupMSGesture(): void {
-		if((<any>window).MSGesture) {
+		if ((<any>window).MSGesture) {
 			this.msGesture = new MSGesture();
 			setTimeout(() => this.msGesture.target = this.wrapper, 100); // TODO@joh, TODO@IETeam
 		}
@@ -631,22 +682,22 @@ export class TreeView extends HeightMap {
 
 		// when view scrolls down, start rendering from the renderBottom
 		for (i = this.indexAfter(renderBottom) - 1, stop = this.indexAt(Math.max(thisRenderBottom, renderTop)); i >= stop; i--) {
-			this.insertItemInDOM(<ViewItem> this.itemAtIndex(i));
+			this.insertItemInDOM(<ViewItem>this.itemAtIndex(i));
 		}
 
 		// when view scrolls up, start rendering from either this.renderTop or renderBottom
 		for (i = Math.min(this.indexAt(this.lastRenderTop), this.indexAfter(renderBottom)) - 1, stop = this.indexAt(renderTop); i >= stop; i--) {
-			this.insertItemInDOM(<ViewItem> this.itemAtIndex(i));
+			this.insertItemInDOM(<ViewItem>this.itemAtIndex(i));
 		}
 
 		// when view scrolls down, start unrendering from renderTop
 		for (i = this.indexAt(this.lastRenderTop), stop = Math.min(this.indexAt(renderTop), this.indexAfter(thisRenderBottom)); i < stop; i++) {
-			this.removeItemFromDOM(<ViewItem> this.itemAtIndex(i));
+			this.removeItemFromDOM(<ViewItem>this.itemAtIndex(i));
 		}
 
 		// when view scrolls up, start unrendering from either renderBottom this.renderTop
 		for (i = Math.max(this.indexAfter(renderBottom), this.indexAt(this.lastRenderTop)), stop = this.indexAfter(thisRenderBottom); i < stop; i++) {
-			this.removeItemFromDOM(<ViewItem> this.itemAtIndex(i));
+			this.removeItemFromDOM(<ViewItem>this.itemAtIndex(i));
 		}
 
 		var topItem = this.itemAtIndex(this.indexAt(renderTop));
@@ -663,65 +714,21 @@ export class TreeView extends HeightMap {
 		this.releaseModel();
 		this.model = newModel;
 
-		this.modelListeners.push(this.model.addBulkListener2((e) => this.onModelEvents(e)));
-	}
+		this.model.onRefresh(this.onRefreshing, this, this.modelListeners);
+		this.model.onDidRefresh(this.onRefreshed, this, this.modelListeners);
+		this.model.onSetInput(this.onClearingInput, this, this.modelListeners);
+		this.model.onDidSetInput(this.onSetInput, this, this.modelListeners);
+		this.model.onDidFocus(this.onModelFocusChange, this, this.modelListeners);
 
-	private onModelEvents(events:any[]): void {
-		var elementsToRefresh: Model.Item[] = [];
-
-		for (var i = 0, len = events.length; i < len; i++) {
-			var event = events[i];
-			var data = event.getData();
-
-			switch (event.getType()) {
-				case 'refreshing':
-					this.onRefreshing();
-					break;
-				case 'refreshed':
-					this.onRefreshed();
-					break;
-				case 'clearingInput':
-					this.onClearingInput(data);
-					break;
-				case 'setInput':
-					this.onSetInput(data);
-					break;
-				case 'item:childrenRefreshing':
-					this.onItemChildrenRefreshing(data);
-					break;
-				case 'item:childrenRefreshed':
-					this.onItemChildrenRefreshed(data);
-					break;
-				case 'item:refresh':
-					elementsToRefresh.push(data.item);
-					break;
-				case 'item:expanding':
-					this.onItemExpanding(data);
-					break;
-				case 'item:expanded':
-					this.onItemExpanded(data);
-					break;
-				case 'item:collapsing':
-					this.onItemCollapsing(data);
-					break;
-				case 'item:reveal':
-					this.onItemReveal(data);
-					break;
-				case 'item:addTrait':
-					this.onItemAddTrait(data);
-					break;
-				case 'item:removeTrait':
-					this.onItemRemoveTrait(data);
-					break;
-				case 'focus':
-					this.onModelFocusChange();
-					break;
-			}
-		}
-
-		if (elementsToRefresh.length > 0) {
-			this.onItemsRefresh(elementsToRefresh);
-		}
+		this.model.onRefreshItemChildren(this.onItemChildrenRefreshing, this, this.modelListeners);
+		this.model.onDidRefreshItemChildren(this.onItemChildrenRefreshed, this, this.modelListeners);
+		this.model.onDidRefreshItem(this.onItemRefresh, this, this.modelListeners);
+		this.model.onExpandItem(this.onItemExpanding, this, this.modelListeners);
+		this.model.onDidExpandItem(this.onItemExpanded, this, this.modelListeners);
+		this.model.onCollapseItem(this.onItemCollapsing, this, this.modelListeners);
+		this.model.onDidRevealItem(this.onItemReveal, this, this.modelListeners);
+		this.model.onDidAddTraitItem(this.onItemAddTrait, this, this.modelListeners);
+		this.model.onDidRemoveTraitItem(this.onItemRemoveTrait, this, this.modelListeners);
 	}
 
 	private onRefreshing(): void {
@@ -741,7 +748,7 @@ export class TreeView extends HeightMap {
 		this.scrollTop = scrollTop;
 	}
 
-	public focusNextPage(eventPayload?:any): void {
+	public focusNextPage(eventPayload?: any): void {
 		var lastPageIndex = this.indexAt(this.scrollTop + this.viewHeight);
 		lastPageIndex = lastPageIndex === 0 ? 0 : lastPageIndex - 1;
 		var lastPageElement = this.itemAtIndex(lastPageIndex).model.getElement();
@@ -763,8 +770,8 @@ export class TreeView extends HeightMap {
 		}
 	}
 
-	public focusPreviousPage(eventPayload?:any): void {
-		var firstPageIndex:number;
+	public focusPreviousPage(eventPayload?: any): void {
+		var firstPageIndex: number;
 
 		if (this.scrollTop === 0) {
 			firstPageIndex = this.indexAt(this.scrollTop);
@@ -792,62 +799,65 @@ export class TreeView extends HeightMap {
 	}
 
 	public get viewHeight() {
-		return this.scrollableElement.getHeight();
+		const scrollDimensions = this.scrollableElement.getScrollDimensions();
+		return scrollDimensions.height;
 	}
 
 	public set viewHeight(viewHeight: number) {
-		this.scrollableElement.updateState({
+		this.scrollableElement.setScrollDimensions({
 			height: viewHeight,
 			scrollHeight: this.getTotalHeight()
 		});
 	}
 
 	public get scrollTop(): number {
-		return this.scrollableElement.getScrollTop();
+		const scrollPosition = this.scrollableElement.getScrollPosition();
+		return scrollPosition.scrollTop;
 	}
 
 	public set scrollTop(scrollTop: number) {
-		this.scrollableElement.updateState({
-			scrollTop: scrollTop,
+		this.scrollableElement.setScrollDimensions({
 			scrollHeight: this.getTotalHeight()
+		});
+		this.scrollableElement.setScrollPosition({
+			scrollTop: scrollTop
 		});
 	}
 
 	public getScrollPosition(): number {
-		const height =  this.getTotalHeight() - this.viewHeight;
-		return height <= 0 ? 0 : this.scrollTop / height;
+		const height = this.getTotalHeight() - this.viewHeight;
+		return height <= 0 ? 1 : this.scrollTop / height;
 	}
 
 	public setScrollPosition(pos: number): void {
-		const height =  this.getTotalHeight() - this.viewHeight;
+		const height = this.getTotalHeight() - this.viewHeight;
 		this.scrollTop = height * pos;
 	}
 
 	// Events
 
-	private onClearingInput(e:Model.IInputEvent): void {
-		var item = <Model.Item> e.item;
+	private onClearingInput(e: Model.IInputEvent): void {
+		var item = <Model.Item>e.item;
 		if (item) {
 			this.onRemoveItems(new MappedIterator(item.getNavigator(), item => item && item.id));
 			this.onRowsChanged();
 		}
 	}
 
-	private onSetInput(e:Model.IInputEvent): void {
+	private onSetInput(e: Model.IInputEvent): void {
 		this.context.cache.garbageCollect();
-		this.inputItem = new RootViewItem(this.context, <Model.Item> e.item, this.wrapper);
-		this.emit('viewItem:create', { item: this.inputItem.model });
+		this.inputItem = new RootViewItem(this.context, <Model.Item>e.item, this.wrapper);
 	}
 
-	private onItemChildrenRefreshing(e:Model.IItemChildrenRefreshEvent): void {
-		var item = <Model.Item> e.item;
+	private onItemChildrenRefreshing(e: Model.IItemChildrenRefreshEvent): void {
+		var item = <Model.Item>e.item;
 		var viewItem = this.items[item.id];
 
 		if (viewItem) {
-			viewItem.loadingPromise = WinJS.TPromise.timeout(TreeView.LOADING_DECORATION_DELAY).then(() => {
-				viewItem.loadingPromise = null;
+			viewItem.loadingTimer = setTimeout(() => {
+				viewItem.loadingTimer = 0;
 				viewItem.loading = true;
-			});
+			}, TreeView.LOADING_DECORATION_DELAY);
 		}
 
 		if (!e.isNested) {
@@ -863,14 +873,14 @@ export class TreeView extends HeightMap {
 		}
 	}
 
-	private onItemChildrenRefreshed(e:Model.IItemChildrenRefreshEvent): void {
-		var item = <Model.Item> e.item;
+	private onItemChildrenRefreshed(e: Model.IItemChildrenRefreshEvent): void {
+		var item = <Model.Item>e.item;
 		var viewItem = this.items[item.id];
 
 		if (viewItem) {
-			if (viewItem.loadingPromise) {
-				viewItem.loadingPromise.cancel();
-				viewItem.loadingPromise = null;
+			if (viewItem.loadingTimer) {
+				clearTimeout(viewItem.loadingTimer);
+				viewItem.loadingTimer = 0;
 			}
 
 			viewItem.loading = false;
@@ -893,13 +903,13 @@ export class TreeView extends HeightMap {
 			if (!skipDiff) {
 				const lcs = new Diff.LcsDiff({
 					getLength: () => previousChildrenIds.length,
-					getElementHash: (i:number) => previousChildrenIds[i]
+					getElementHash: (i: number) => previousChildrenIds[i]
 				}, {
-					getLength: () => afterModelItems.length,
-					getElementHash: (i:number) => afterModelItems[i].id
-				}, null);
+						getLength: () => afterModelItems.length,
+						getElementHash: (i: number) => afterModelItems[i].id
+					}, null);
 
-				diff = lcs.ComputeDiff();
+				diff = lcs.ComputeDiff(false);
 
 				// this means that the result of the diff algorithm would result
 				// in inserting items that were already registered. this can only
@@ -937,7 +947,7 @@ export class TreeView extends HeightMap {
 
 			} else if (skipDiff || diff.length) {
 				this.onRemoveItems(new ArrayIterator(previousChildrenIds));
-				this.onInsertItems(new ArrayIterator(afterModelItems));
+				this.onInsertItems(new ArrayIterator(afterModelItems), item.getDepth() > 0 ? item.id : null);
 			}
 
 			if (skipDiff || diff.length) {
@@ -946,20 +956,24 @@ export class TreeView extends HeightMap {
 		}
 	}
 
-	private onItemsRefresh(items:Model.Item[]): void {
+	private onItemRefresh(item: Model.Item): void {
+		this.onItemsRefresh([item]);
+	}
+
+	private onItemsRefresh(items: Model.Item[]): void {
 		this.onRefreshItemSet(items.filter(item => this.items.hasOwnProperty(item.id)));
 		this.onRowsChanged();
 	}
 
-	private onItemExpanding(e:Model.IItemExpandEvent): void {
+	private onItemExpanding(e: Model.IItemExpandEvent): void {
 		var viewItem = this.items[e.item.id];
 		if (viewItem) {
 			viewItem.expanded = true;
 		}
 	}
 
-	private onItemExpanded(e:Model.IItemExpandEvent): void {
-		var item = <Model.Item> e.item;
+	private onItemExpanded(e: Model.IItemExpandEvent): void {
+		var item = <Model.Item>e.item;
 		var viewItem = this.items[item.id];
 		if (viewItem) {
 			viewItem.expanded = true;
@@ -975,8 +989,8 @@ export class TreeView extends HeightMap {
 		}
 	}
 
-	private onItemCollapsing(e:Model.IItemCollapseEvent): void {
-		var item = <Model.Item> e.item;
+	private onItemCollapsing(e: Model.IItemCollapseEvent): void {
+		var item = <Model.Item>e.item;
 		var viewItem = this.items[item.id];
 		if (viewItem) {
 			viewItem.expanded = false;
@@ -995,9 +1009,9 @@ export class TreeView extends HeightMap {
 		return -1;
 	}
 
-	private onItemReveal(e:Model.IItemRevealEvent): void {
-		var item = <Model.Item> e.item;
-		var relativeTop = <number> e.relativeTop;
+	private onItemReveal(e: Model.IItemRevealEvent): void {
+		var item = <Model.Item>e.item;
+		var relativeTop = <number>e.relativeTop;
 		var viewItem = this.items[item.id];
 		if (viewItem) {
 			if (relativeTop !== null) {
@@ -1020,9 +1034,9 @@ export class TreeView extends HeightMap {
 		}
 	}
 
-	private onItemAddTrait(e:Model.IItemTraitEvent): void {
-		var item = <Model.Item> e.item;
-		var trait = <string> e.trait;
+	private onItemAddTrait(e: Model.IItemTraitEvent): void {
+		var item = <Model.Item>e.item;
+		var trait = <string>e.trait;
 		var viewItem = this.items[item.id];
 		if (viewItem) {
 			viewItem.addClass(trait);
@@ -1040,9 +1054,9 @@ export class TreeView extends HeightMap {
 		}
 	}
 
-	private onItemRemoveTrait(e:Model.IItemTraitEvent): void {
-		var item = <Model.Item> e.item;
-		var trait = <string> e.trait;
+	private onItemRemoveTrait(e: Model.IItemTraitEvent): void {
+		var item = <Model.Item>e.item;
+		var trait = <string>e.trait;
 		var viewItem = this.items[item.id];
 		if (viewItem) {
 			viewItem.removeClass(trait);
@@ -1080,17 +1094,14 @@ export class TreeView extends HeightMap {
 		this.items[item.id] = item;
 	}
 
-	public onRefreshItem(item: ViewItem, needsRender= false): void {
+	public onRefreshItem(item: ViewItem, needsRender = false): void {
 		item.needsRender = item.needsRender || needsRender;
 		this.refreshViewItem(item);
 	}
 
 	public onRemoveItem(item: ViewItem): void {
 		this.removeItemFromDOM(item);
-
 		item.dispose();
-		this.emit('viewItem:dispose', { item: this.inputItem.model });
-
 		delete this.items[item.id];
 	}
 
@@ -1108,7 +1119,7 @@ export class TreeView extends HeightMap {
 
 	// DOM Events
 
-	private onClick(e:MouseEvent): void {
+	private onClick(e: MouseEvent): void {
 		if (this.lastPointerType && this.lastPointerType !== 'mouse') {
 			return;
 		}
@@ -1120,7 +1131,7 @@ export class TreeView extends HeightMap {
 			return;
 		}
 
-		if(Browser.isIE10orLater && Date.now() - this.lastClickTimeStamp < 300) {
+		if (Browser.isIE && Date.now() - this.lastClickTimeStamp < 300) {
 			// IE10+ doesn't set the detail property correctly. While IE10 simply
 			// counts the number of clicks, IE11 reports always 1. To align with
 			// other browser, we set the value to 2 if clicks events come in a 300ms
@@ -1132,7 +1143,7 @@ export class TreeView extends HeightMap {
 		this.context.controller.onClick(this.context.tree, item.model.getElement(), event);
 	}
 
-	private onMouseDown(e:MouseEvent): void {
+	private onMouseDown(e: MouseEvent): void {
 		this.didJustPressContextMenuKey = false;
 
 		if (!this.context.controller.onMouseDown) {
@@ -1158,7 +1169,7 @@ export class TreeView extends HeightMap {
 		this.context.controller.onMouseDown(this.context.tree, item.model.getElement(), event);
 	}
 
-	private onMouseUp(e:MouseEvent): void {
+	private onMouseUp(e: MouseEvent): void {
 		if (!this.context.controller.onMouseUp) {
 			return;
 		}
@@ -1182,8 +1193,8 @@ export class TreeView extends HeightMap {
 		this.context.controller.onMouseUp(this.context.tree, item.model.getElement(), event);
 	}
 
-	private onTap(e:Touch.GestureEvent): void {
-		var item = this.getItemAround(<HTMLElement> e.initialTarget);
+	private onTap(e: Touch.GestureEvent): void {
+		var item = this.getItemAround(<HTMLElement>e.initialTarget);
 
 		if (!item) {
 			return;
@@ -1192,7 +1203,7 @@ export class TreeView extends HeightMap {
 		this.context.controller.onTap(this.context.tree, item.model.getElement(), e);
 	}
 
-	private onTouchChange(event:Touch.GestureEvent): void {
+	private onTouchChange(event: Touch.GestureEvent): void {
 		event.preventDefault();
 		event.stopPropagation();
 
@@ -1201,7 +1212,7 @@ export class TreeView extends HeightMap {
 
 	private onContextMenu(keyboardEvent: KeyboardEvent): void;
 	private onContextMenu(mouseEvent: MouseEvent): void;
-	private onContextMenu(event: Event): void {
+	private onContextMenu(event: KeyboardEvent | MouseEvent): void {
 		var resultEvent: _.ContextMenuEvent;
 		var element: any;
 
@@ -1211,18 +1222,21 @@ export class TreeView extends HeightMap {
 			var keyboardEvent = new Keyboard.StandardKeyboardEvent(<KeyboardEvent>event);
 			element = this.model.getFocus();
 
-			if (!element) {
-				return;
-			}
+			var position: IDomNodePagePosition;
 
-			var id = this.context.dataSource.getId(this.context.tree, element);
-			var viewItem = this.items[id];
-			var position = DOM.getDomNodePagePosition(viewItem.element);
+			if (!element) {
+				element = this.model.getInput();
+				position = DOM.getDomNodePagePosition(this.inputItem.element);
+			} else {
+				var id = this.context.dataSource.getId(this.context.tree, element);
+				var viewItem = this.items[id];
+				position = DOM.getDomNodePagePosition(viewItem.element);
+			}
 
 			resultEvent = new _.KeyboardContextMenuEvent(position.left + position.width, position.top, keyboardEvent);
 
-		} else  {
-			var mouseEvent = new Mouse.StandardMouseEvent(<MouseEvent> event);
+		} else {
+			var mouseEvent = new Mouse.StandardMouseEvent(<MouseEvent>event);
 			var item = this.getItemAround(mouseEvent.target);
 
 			if (!item) {
@@ -1236,7 +1250,7 @@ export class TreeView extends HeightMap {
 		this.context.controller.onContextMenu(this.context.tree, element, resultEvent);
 	}
 
-	private onKeyDown(e:KeyboardEvent): void {
+	private onKeyDown(e: KeyboardEvent): void {
 		var event = new Keyboard.StandardKeyboardEvent(e);
 
 		this.didJustPressContextMenuKey = event.keyCode === KeyCode.ContextMenu || (event.shiftKey && event.keyCode === KeyCode.F10);
@@ -1253,7 +1267,7 @@ export class TreeView extends HeightMap {
 		this.context.controller.onKeyDown(this.context.tree, event);
 	}
 
-	private onKeyUp(e:KeyboardEvent): void {
+	private onKeyUp(e: KeyboardEvent): void {
 		if (this.didJustPressContextMenuKey) {
 			this.onContextMenu(e);
 		}
@@ -1262,7 +1276,7 @@ export class TreeView extends HeightMap {
 		this.context.controller.onKeyUp(this.context.tree, new Keyboard.StandardKeyboardEvent(e));
 	}
 
-	private onDragStart(item: ViewItem, e:any): void {
+	private onDragStart(item: ViewItem, e: any): void {
 		if (this.model.getHighlight()) {
 			return;
 		}
@@ -1278,19 +1292,22 @@ export class TreeView extends HeightMap {
 		}
 
 		e.dataTransfer.effectAllowed = 'copyMove';
-		e.dataTransfer.setData('URL', item.uri);
-		if(e.dataTransfer.setDragImage) {
-			if (elements.length === 1 && item.element) {
-				e.dataTransfer.setDragImage(item.element, e.offsetX || 6, e.offsetY || 6);
+		e.dataTransfer.setData(DataTransfers.RESOURCES, JSON.stringify([item.uri]));
+		if (e.dataTransfer.setDragImage) {
+			let label: string;
 
-			} else if (elements.length > 1) {
-				var dragImage = document.createElement('div');
-				dragImage.className = 'monaco-tree-drag-image';
-				dragImage.textContent = '' + elements.length;
-				document.body.appendChild(dragImage);
-				e.dataTransfer.setDragImage(dragImage, -10, -10);
-				setTimeout(() => document.body.removeChild(dragImage), 0);
+			if (this.context.dnd.getDragLabel) {
+				label = this.context.dnd.getDragLabel(this.context.tree, elements);
+			} else {
+				label = String(elements.length);
 			}
+
+			const dragImage = document.createElement('div');
+			dragImage.className = 'monaco-tree-drag-image';
+			dragImage.textContent = label;
+			document.body.appendChild(dragImage);
+			e.dataTransfer.setDragImage(dragImage, -10, -10);
+			setTimeout(() => document.body.removeChild(dragImage), 0);
 		}
 
 		this.currentDragAndDropData = new dnd.ElementsDragAndDropData(elements);
@@ -1346,12 +1363,12 @@ export class TreeView extends HeightMap {
 		}
 	}
 
-	private onDragOver(e:DragEvent): boolean {
+	private onDragOver(e: DragEvent): boolean {
 		var event = new Mouse.DragMouseEvent(e);
 
 		var viewItem = this.getItemAround(event.target);
 
-		if (!viewItem) {
+		if (!viewItem || (event.posx === 0 && event.posy === 0 && event.browserEvent.type === DOM.EventType.DRAG_LEAVE)) {
 			// dragging outside of tree
 
 			if (this.currentDropTarget) {
@@ -1466,18 +1483,18 @@ export class TreeView extends HeightMap {
 					}
 				}
 
-				this.currentDropPromise = WinJS.TPromise.timeout(500).then(() => {
-					return this.context.tree.expand(this.currentDropElement).then(() => {
-						this.shouldInvalidateDropReaction = true;
-					});
-				});
+				if (reaction.autoExpand) {
+					this.currentDropPromise = WinJS.TPromise.timeout(500)
+						.then(() => this.context.tree.expand(this.currentDropElement))
+						.then(() => this.shouldInvalidateDropReaction = true);
+				}
 			}
 		}
 
 		return true;
 	}
 
-	private onDrop(e:DragEvent): void {
+	private onDrop(e: DragEvent): void {
 		if (this.currentDropElement) {
 			var event = new Mouse.DragMouseEvent(e);
 			event.preventDefault();
@@ -1488,7 +1505,7 @@ export class TreeView extends HeightMap {
 		this.cancelDragAndDropScrollInterval();
 	}
 
-	private onDragEnd(e:DragEvent): void {
+	private onDragEnd(e: DragEvent): void {
 		if (this.currentDropTarget) {
 			this.currentDropTargets.forEach(i => i.dropTarget = false);
 			this.currentDropTargets = [];
@@ -1511,6 +1528,8 @@ export class TreeView extends HeightMap {
 		if (!this.context.options.alwaysFocused) {
 			DOM.addClass(this.domNode, 'focused');
 		}
+
+		this._onDOMFocus.fire();
 	}
 
 	private onBlur(): void {
@@ -1519,11 +1538,13 @@ export class TreeView extends HeightMap {
 		}
 
 		this.domNode.removeAttribute('aria-activedescendant'); // ARIA
+
+		this._onDOMBlur.fire();
 	}
 
 	// MS specific DOM Events
 
-	private onMsPointerDown(event: MSPointerEvent):void {
+	private onMsPointerDown(event: MSPointerEvent): void {
 		if (!this.msGesture) {
 			return;
 		}
@@ -1545,20 +1566,20 @@ export class TreeView extends HeightMap {
 		this.msGesture.addPointer(event.pointerId);
 	}
 
-	private onThrottledMsGestureChange(event: IThrottledGestureEvent):void {
+	private onThrottledMsGestureChange(event: IThrottledGestureEvent): void {
 		this.scrollTop -= event.translationY;
 	}
 
-	private onMsGestureTap(event:MSGestureEvent):void {
-		(<any> event).initialTarget = document.elementFromPoint(event.clientX, event.clientY);
-		this.onTap(<any> event);
+	private onMsGestureTap(event: MSGestureEvent): void {
+		(<any>event).initialTarget = document.elementFromPoint(event.clientX, event.clientY);
+		this.onTap(<any>event);
 	}
 
 	// DOM changes
 
 	private insertItemInDOM(item: ViewItem): void {
 		var elementAfter: HTMLElement = null;
-		var itemAfter = <ViewItem> this.itemAfter(item);
+		var itemAfter = <ViewItem>this.itemAfter(item);
 
 		if (itemAfter && itemAfter.element) {
 			elementAfter = itemAfter.element;
@@ -1568,6 +1589,10 @@ export class TreeView extends HeightMap {
 	}
 
 	private removeItemFromDOM(item: ViewItem): void {
+		if (!item) {
+			return;
+		}
+
 		item.removeFromDOM();
 	}
 
@@ -1578,10 +1603,10 @@ export class TreeView extends HeightMap {
 	}
 
 	private getItemAround(element: HTMLElement): ViewItem {
-		var candidate:ViewItem = this.inputItem;
+		var candidate: ViewItem = this.inputItem;
 		do {
-			if ((<any> element)[TreeView.BINDING]) {
-				candidate = (<any> element)[TreeView.BINDING];
+			if ((<any>element)[TreeView.BINDING]) {
+				candidate = (<any>element)[TreeView.BINDING];
 			}
 
 			if (element === this.wrapper || element === this.domNode) {
@@ -1592,6 +1617,7 @@ export class TreeView extends HeightMap {
 				return null;
 			}
 		} while (element = element.parentElement);
+		return undefined;
 	}
 
 	// Cleanup
@@ -1612,15 +1638,13 @@ export class TreeView extends HeightMap {
 
 		this.viewListeners = Lifecycle.dispose(this.viewListeners);
 
+		this._onDOMFocus.dispose();
+		this._onDOMBlur.dispose();
+
 		if (this.domNode.parentNode) {
 			this.domNode.parentNode.removeChild(this.domNode);
 		}
 		this.domNode = null;
-
-		if (this.wrapperGesture) {
-			this.wrapperGesture.dispose();
-			this.wrapperGesture = null;
-		}
 
 		if (this.context.cache) {
 			this.context.cache.dispose();

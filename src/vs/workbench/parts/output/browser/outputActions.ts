@@ -4,51 +4,48 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import {TPromise} from 'vs/base/common/winjs.base';
+import { TPromise } from 'vs/base/common/winjs.base';
 import nls = require('vs/nls');
-import {Registry} from 'vs/platform/platform';
-import {IAction, Action} from 'vs/base/common/actions';
-import {IOutputChannelRegistry, Extensions, IOutputService, OUTPUT_PANEL_ID} from 'vs/workbench/parts/output/common/output';
-import {SelectActionItem} from 'vs/base/browser/ui/actionbar/actionbar';
-import {IPartService} from 'vs/workbench/services/part/common/partService';
-import {IPanelService} from 'vs/workbench/services/panel/common/panelService';
+import { IAction, Action } from 'vs/base/common/actions';
+import { IOutputService, OUTPUT_PANEL_ID, IOutputChannelRegistry, Extensions as OutputExt } from 'vs/workbench/parts/output/common/output';
+import { SelectActionItem } from 'vs/base/browser/ui/actionbar/actionbar';
+import { IPartService } from 'vs/workbench/services/part/common/partService';
+import { IPanelService } from 'vs/workbench/services/panel/common/panelService';
+import { TogglePanelAction } from 'vs/workbench/browser/panel';
+import { IDisposable, dispose } from 'vs/base/common/lifecycle';
+import { attachSelectBoxStyler } from 'vs/platform/theme/common/styler';
+import { IThemeService } from 'vs/platform/theme/common/themeService';
+import { IContextViewService } from 'vs/platform/contextview/browser/contextView';
+import { Registry } from 'vs/platform/registry/common/platform';
 
-export class ToggleOutputAction extends Action {
+export class ToggleOutputAction extends TogglePanelAction {
 
-	public static ID = 'workbench.action.output.toggleOutput';
-	public static LABEL = nls.localize('toggleOutput', "Toggle Output");
+	public static readonly ID = 'workbench.action.output.toggleOutput';
+	public static readonly LABEL = nls.localize('toggleOutput', "Toggle Output");
 
 	constructor(
 		id: string, label: string,
-		@IPartService private partService: IPartService,
-		@IPanelService private panelService: IPanelService,
-		@IOutputService private outputService: IOutputService
+		@IPartService partService: IPartService,
+		@IPanelService panelService: IPanelService,
 	) {
-		super(id, label);
-	}
-
-	public run(event?: any): TPromise<any> {
-		const panel = this.panelService.getActivePanel();
-		if (panel && panel.getId() === OUTPUT_PANEL_ID) {
-			this.partService.setPanelHidden(true);
-
-			return TPromise.as(null);
-		}
-
-		return this.outputService.getActiveChannel().show();
+		super(id, label, OUTPUT_PANEL_ID, panelService, partService);
 	}
 }
 
 export class ClearOutputAction extends Action {
 
+	public static readonly ID = 'workbench.output.action.clearOutput';
+	public static readonly LABEL = nls.localize('clearOutput', "Clear Output");
+
 	constructor(
+		id: string, label: string,
 		@IOutputService private outputService: IOutputService,
 		@IPanelService private panelService: IPanelService
 	) {
-		super('workbench.output.action.clearOutput', nls.localize('clearOutput', "Clear Output"), 'output-action clear-output');
+		super(id, label, 'output-action clear-output');
 	}
 
-	public run(): TPromise<any> {
+	public run(): TPromise<boolean> {
 		this.outputService.getActiveChannel().clear();
 		this.panelService.getActivePanel().focus();
 
@@ -56,9 +53,46 @@ export class ClearOutputAction extends Action {
 	}
 }
 
+export class ToggleOutputScrollLockAction extends Action {
+
+	public static readonly ID = 'workbench.output.action.toggleOutputScrollLock';
+	public static readonly LABEL = nls.localize({ key: 'toggleOutputScrollLock', comment: ['Turn on / off automatic output scrolling'] }, "Toggle Output Scroll Lock");
+
+	private toDispose: IDisposable[] = [];
+
+	constructor(id: string, label: string,
+		@IOutputService private outputService: IOutputService) {
+		super(id, label, 'output-action output-scroll-unlock');
+		this.toDispose.push(this.outputService.onActiveOutputChannel(channel => this.setClass(this.outputService.getActiveChannel().scrollLock)));
+	}
+
+	public run(): TPromise<boolean> {
+		const activeChannel = this.outputService.getActiveChannel();
+		if (activeChannel) {
+			activeChannel.scrollLock = !activeChannel.scrollLock;
+			this.setClass(activeChannel.scrollLock);
+		}
+
+		return TPromise.as(true);
+	}
+
+	private setClass(locked: boolean) {
+		if (locked) {
+			this.class = 'output-action output-scroll-lock';
+		} else {
+			this.class = 'output-action output-scroll-unlock';
+		}
+	}
+
+	public dispose() {
+		super.dispose();
+		this.toDispose = dispose(this.toDispose);
+	}
+}
+
 export class SwitchOutputAction extends Action {
 
-	public static ID = 'workbench.output.action.switchBetweenOutputs';
+	public static readonly ID = 'workbench.output.action.switchBetweenOutputs';
 
 	constructor( @IOutputService private outputService: IOutputService) {
 		super(SwitchOutputAction.ID, nls.localize('switchToOutput.label', "Switch to Output"));
@@ -67,7 +101,7 @@ export class SwitchOutputAction extends Action {
 	}
 
 	public run(channelId?: string): TPromise<any> {
-		return this.outputService.getChannel(channelId).show();
+		return this.outputService.showChannel(channelId);
 	}
 }
 
@@ -75,28 +109,41 @@ export class SwitchOutputActionItem extends SelectActionItem {
 
 	constructor(
 		action: IAction,
-		@IOutputService private outputService: IOutputService
+		@IOutputService private outputService: IOutputService,
+		@IThemeService themeService: IThemeService,
+		@IContextViewService contextViewService: IContextViewService
 	) {
-		super(null, action, SwitchOutputActionItem.getChannelLabels(outputService), Math.max(0, SwitchOutputActionItem.getChannelLabels(outputService).indexOf(outputService.getActiveChannel().label)));
-		this.toDispose.push(this.outputService.onOutputChannel(this.onOutputChannel, this));
-		this.toDispose.push(this.outputService.onActiveOutputChannel(this.onOutputChannel, this));
+		super(null, action, [], 0, contextViewService);
+
+		let outputChannelRegistry = <IOutputChannelRegistry>Registry.as(OutputExt.OutputChannels);
+		this.toDispose.push(outputChannelRegistry.onDidRegisterChannel(() => this.updateOtions()));
+		this.toDispose.push(outputChannelRegistry.onDidRemoveChannel(() => this.updateOtions()));
+		this.toDispose.push(this.outputService.onActiveOutputChannel(activeChannelId => this.setOptions(this.getOptions(), this.getSelected(activeChannelId))));
+		this.toDispose.push(attachSelectBoxStyler(this.selectBox, themeService));
+
+		this.setOptions(this.getOptions(), this.getSelected(this.outputService.getActiveChannel().id));
 	}
 
 	protected getActionContext(option: string): string {
-		const channel = Registry.as<IOutputChannelRegistry>(Extensions.OutputChannels).getChannels().filter(channelData => channelData.label === option).pop();
+		const channel = this.outputService.getChannels().filter(channelData => channelData.label === option).pop();
 
 		return channel ? channel.id : option;
 	}
 
-	private onOutputChannel(): void {
-		let channels = SwitchOutputActionItem.getChannelLabels(this.outputService);
-		let selected = Math.max(0, channels.indexOf(this.outputService.getActiveChannel().label));
-
-		this.setOptions(channels, selected);
+	private getOptions(): string[] {
+		return this.outputService.getChannels().map(c => c.label);
 	}
 
-	private static getChannelLabels(outputService: IOutputService): string[] {
-		const contributedChannels = Registry.as<IOutputChannelRegistry>(Extensions.OutputChannels).getChannels().map(channelData => channelData.label);
-		return contributedChannels.sort(); // sort by name
+	private updateOtions(): void {
+		const activeChannelIndex = this.getSelected(this.outputService.getActiveChannel().id);
+		this.setOptions(this.getOptions(), activeChannelIndex);
+	}
+
+	private getSelected(outputId: string): number {
+		if (!outputId) {
+			return undefined;
+		}
+
+		return Math.max(0, this.outputService.getChannels().map(c => c.id).indexOf(outputId));
 	}
 }

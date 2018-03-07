@@ -6,54 +6,46 @@
 'use strict';
 
 import assert = require('assert');
-import fs = require('fs');
 
 import stream = require('vs/base/node/stream');
 
 suite('Stream', () => {
-	test('readExactlyByFile - ANSI', function (done: () => void) {
-		var file = require.toUrl('./fixtures/file.css');
+	test('readExactlyByFile - ANSI', function (done: (err?) => void) {
+		const file = require.toUrl('./fixtures/file.css');
 
-		stream.readExactlyByFile(file, 10, (error: Error, buffer: NodeBuffer, count: number) => {
-			assert.equal(error, null);
-			assert.equal(count, 10);
+		stream.readExactlyByFile(file, 10).then(({ buffer, bytesRead }) => {
+			assert.equal(bytesRead, 10);
 			assert.equal(buffer.toString(), '/*--------');
-
 			done();
-		});
+		}, done);
 	});
 
-	test('readExactlyByFile - empty', function (done: () => void) {
-		var file = require.toUrl('./fixtures/empty.txt');
+	test('readExactlyByFile - empty', function (done: (err?: any) => void) {
+		const file = require.toUrl('./fixtures/empty.txt');
 
-		stream.readExactlyByFile(file, 10, (error: Error, buffer: NodeBuffer, count: number) => {
-			assert.equal(error, null);
-			assert.equal(count, 0);
-
+		stream.readExactlyByFile(file, 10).then(({ bytesRead }) => {
+			assert.equal(bytesRead, 0);
 			done();
-		});
+		}, done);
 	});
 
-	test('readExactlyByStream - ANSI', function (done: () => void) {
-		var file = require.toUrl('./fixtures/file.css');
+	test('readToMatchingString - ANSI', function (done: (err?: any) => void) {
+		const file = require.toUrl('./fixtures/file.css');
 
-		stream.readExactlyByStream(fs.createReadStream(file), 10, (error: Error, buffer: NodeBuffer, count: number) => {
-			assert.equal(error, null);
-			assert.equal(count, 10);
-			assert.equal(buffer.toString(), '/*--------');
-
+		stream.readToMatchingString(file, '\n', 10, 100).then((result: string) => {
+			// \r may be present on Windows
+			assert.equal(result.replace('\r', ''), '/*---------------------------------------------------------------------------------------------');
 			done();
-		});
+		}, done);
 	});
 
-	test('readExactlyByStream - empty', function (done: () => void) {
-		var file = require.toUrl('./fixtures/empty.txt');
+	test('readToMatchingString - empty', function (done: (err?: any) => void) {
+		const file = require.toUrl('./fixtures/empty.txt');
 
-		stream.readExactlyByStream(fs.createReadStream(file), 10, (error: Error, buffer: NodeBuffer, count: number) => {
-			assert.equal(error, null);
-			assert.equal(count, 0);
+		stream.readToMatchingString(file, '\n', 10, 100).then((result: string) => {
+			assert.equal(result, null);
 
 			done();
-		});
+		}, done);
 	});
 });

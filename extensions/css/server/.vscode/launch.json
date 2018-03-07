@@ -6,27 +6,28 @@
 			"name": "Attach",
 			"type": "node",
 			"request": "attach",
-			"port": 6004,
+			"port": 6044,
+			"protocol": "inspector",
 			"sourceMaps": true,
-			"outDir": "${workspaceRoot}/out"
+			"outFiles": ["${workspaceFolder}/out/**/*.js"]
 		},
 		{
 			"name": "Unit Tests",
 			"type": "node",
 			"request": "launch",
-			"program": "${workspaceRoot}/../../../node_modules/mocha/bin/_mocha",
+			"program": "${workspaceFolder}/../../../node_modules/mocha/bin/_mocha",
 			"stopOnEntry": false,
 			"args": [
 				"--timeout",
 				"999999",
 				"--colors"
 			],
-			"cwd": "${workspaceRoot}",
+			"cwd": "${workspaceFolder}",
 			"runtimeExecutable": null,
 			"runtimeArgs": [],
 			"env": {},
 			"sourceMaps": true,
-			"outDir": "${workspaceRoot}/out"
+			"outFiles": ["${workspaceFolder}/out/**/*.js"]
 		}
 	]
 }

@@ -3,97 +3,148 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-import nls = require('vs/nls');
 import 'vs/css!../browser/media/breakpointWidget';
-import async = require('vs/base/common/async');
-import errors = require('vs/base/common/errors');
-import { CommonKeybindings, KeyCode, KeyMod } from 'vs/base/common/keyCodes';
-import platform = require('vs/base/common/platform');
-import lifecycle = require('vs/base/common/lifecycle');
-import dom = require('vs/base/browser/dom');
+import * as nls from 'vs/nls';
+import * as errors from 'vs/base/common/errors';
+import { KeyCode } from 'vs/base/common/keyCodes';
+import { isWindows, isMacintosh } from 'vs/base/common/platform';
+import { SelectBox } from 'vs/base/browser/ui/selectBox/selectBox';
+import * as lifecycle from 'vs/base/common/lifecycle';
+import * as dom from 'vs/base/browser/dom';
 import { InputBox } from 'vs/base/browser/ui/inputbox/inputBox';
-import { CommonEditorRegistry } from 'vs/editor/common/editorCommonExtensions';
-import editorbrowser = require('vs/editor/browser/editorBrowser');
-import { ZoneWidget } from 'vs/editor/contrib/zoneWidget/browser/zoneWidget';
-import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
+import { ICodeEditor } from 'vs/editor/browser/editorBrowser';
+import { ZoneWidget } from 'vs/editor/contrib/zoneWidget/zoneWidget';
 import { IContextViewService } from 'vs/platform/contextview/browser/contextView';
-import { IKeybindingService, IKeybindingContextKey } from 'vs/platform/keybinding/common/keybinding';
-import debug = require('vs/workbench/parts/debug/common/debug');
-import {IKeyboardEvent} from 'vs/base/browser/keyboardEvent';
+import { IDebugService, IBreakpoint } from 'vs/workbench/parts/debug/common/debug';
+import { IKeyboardEvent } from 'vs/base/browser/keyboardEvent';
+import { once } from 'vs/base/common/functional';
+import { attachInputBoxStyler, attachSelectBoxStyler } from 'vs/platform/theme/common/styler';
+import { IThemeService } from 'vs/platform/theme/common/themeService';
 
-const $ = dom.emmet;
-const CONTEXT_BREAKPOINT_WIDGET_VISIBLE = 'breakpointWidgetVisible';
-const CLOSE_BREAKPOINT_WIDGET_COMMAND_ID = 'closeBreakpointWidget';
+const $ = dom.$;
+const EXPRESSION_PLACEHOLDER = nls.localize('breakpointWidgetExpressionPlaceholder', "Break when expression evaluates to true. 'Enter' to accept, 'esc' to cancel.");
+const EXPRESSION_ARIA_LABEL = nls.localize('breakpointWidgetAriaLabel', "The program will only stop here if this condition is true. Press Enter to accept or Escape to cancel.");
+const HIT_COUNT_PLACEHOLDER = nls.localize('breakpointWidgetHitCountPlaceholder', "Break when hit count condition is met. 'Enter' to accept, 'esc' to cancel.");
+const HIT_COUNT_ARIA_LABEL = nls.localize('breakpointWidgetHitCountAriaLabel', "The program will only stop here if the hit count is met. Press Enter to accept or Escape to cancel.");
 
 export class BreakpointWidget extends ZoneWidget {
 
-	public static INSTANCE: BreakpointWidget;
-
 	private inputBox: InputBox;
 	private toDispose: lifecycle.IDisposable[];
-	private breakpointWidgetVisible: IKeybindingContextKey<boolean>;
+	private hitCountContext: boolean;
+	private hitCountInput: string;
+	private conditionInput: string;
+	private breakpoint: IBreakpoint;
 
-	constructor(editor: editorbrowser.ICodeEditor, private lineNumber: number,
+	constructor(editor: ICodeEditor, private lineNumber: number, private column: number,
 		@IContextViewService private contextViewService: IContextViewService,
-		@debug.IDebugService private debugService: debug.IDebugService,
-		@IKeybindingService keybindingService: IKeybindingService
+		@IDebugService private debugService: IDebugService,
+		@IThemeService private themeService: IThemeService
 	) {
-		super(editor, { showFrame: true, showArrow: false });
+		super(editor, { showFrame: true, showArrow: false, frameWidth: 1 });
 
 		this.toDispose = [];
+		this.hitCountInput = '';
+		this.conditionInput = '';
+		const uri = this.editor.getModel().uri;
+		this.breakpoint = this.debugService.getModel().getBreakpoints().filter(bp => bp.lineNumber === this.lineNumber && bp.column === this.column && bp.uri.toString() === uri.toString()).pop();
+
+		this.toDispose.push(this.debugService.getModel().onDidChangeBreakpoints(e => {
+			if (this.breakpoint && e.removed && e.removed.indexOf(this.breakpoint) >= 0) {
+				this.dispose();
+			}
+		}));
 		this.create();
-		this.breakpointWidgetVisible = keybindingService.createKey(CONTEXT_BREAKPOINT_WIDGET_VISIBLE, false);
-		this.breakpointWidgetVisible.set(true);
-		BreakpointWidget.INSTANCE = this;
-		this.toDispose.push(editor.onDidChangeModel(() => this.dispose()));
 	}
 
-	public static createInstance(editor: editorbrowser.ICodeEditor, lineNumber: number, instantiationService: IInstantiationService): void {
-		if (BreakpointWidget.INSTANCE) {
-			BreakpointWidget.INSTANCE.dispose();
+	private get placeholder(): string {
+		return this.hitCountContext ? HIT_COUNT_PLACEHOLDER : EXPRESSION_PLACEHOLDER;
+	}
+
+	private get ariaLabel(): string {
+		return this.hitCountContext ? HIT_COUNT_ARIA_LABEL : EXPRESSION_ARIA_LABEL;
+	}
+
+	private getInputBoxValue(breakpoint: IBreakpoint): string {
+		if (this.hitCountContext) {
+			return breakpoint && breakpoint.hitCondition ? breakpoint.hitCondition : this.hitCountInput;
 		}
 
-		instantiationService.createInstance(BreakpointWidget, editor, lineNumber);
-		BreakpointWidget.INSTANCE.show({ lineNumber, column: 1 }, 2);
+		return breakpoint && breakpoint.condition ? breakpoint.condition : this.conditionInput;
 	}
 
 	protected _fillContainer(container: HTMLElement): void {
-		dom.addClass(container, 'breakpoint-widget');
-		const uri = this.editor.getModel().uri;
-		const breakpoint = this.debugService.getModel().getBreakpoints().filter(bp => bp.lineNumber === this.lineNumber && bp.source.uri.toString() === uri.toString()).pop();
+		this.setCssClass('breakpoint-widget');
+		this.hitCountContext = this.breakpoint && this.breakpoint.hitCondition && !this.breakpoint.condition;
+		const selected = this.hitCountContext ? 1 : 0;
+		const selectBox = new SelectBox([nls.localize('expression', "Expression"), nls.localize('hitCount', "Hit Count")], selected, this.contextViewService);
+		this.toDispose.push(attachSelectBoxStyler(selectBox, this.themeService));
+		selectBox.render(dom.append(container, $('.breakpoint-select-container')));
+		selectBox.onDidSelect(e => {
+			this.hitCountContext = e.selected === 'Hit Count';
+			if (this.hitCountContext) {
+				this.conditionInput = this.inputBox.value;
+			} else {
+				this.hitCountInput = this.inputBox.value;
+			}
+
+			this.inputBox.setAriaLabel(this.ariaLabel);
+			this.inputBox.setPlaceHolder(this.placeholder);
+			this.inputBox.value = this.getInputBoxValue(this.breakpoint);
+		});
 
 		const inputBoxContainer = dom.append(container, $('.inputBoxContainer'));
 		this.inputBox = new InputBox(inputBoxContainer, this.contextViewService, {
-			placeholder: nls.localize('breakpointWidgetPlaceholder', "Breakpoint on line {0} will only stop if this condition is true. 'Enter' to accept, 'esc' to cancel.", this.lineNumber),
-			ariaLabel: nls.localize('breakpointWidgetAriaLabel', "Type the breakpoint condition for line {0}. The program will only stop here if this condition is true. Press Enter to accept or Escape to cancel.")
+			placeholder: this.placeholder,
+			ariaLabel: this.ariaLabel
 		});
+		this.toDispose.push(attachInputBoxStyler(this.inputBox, this.themeService));
 		this.toDispose.push(this.inputBox);
 
-		dom.addClass(this.inputBox.inputElement, platform.isWindows ? 'windows' : platform.isMacintosh ? 'mac' : 'linux');
-		this.inputBox.value = (breakpoint && breakpoint.condition) ? breakpoint.condition : '';
+		dom.addClass(this.inputBox.inputElement, isWindows ? 'windows' : isMacintosh ? 'mac' : 'linux');
+		this.inputBox.value = this.getInputBoxValue(this.breakpoint);
 		// Due to an electron bug we have to do the timeout, otherwise we do not get focus
 		setTimeout(() => this.inputBox.focus(), 0);
 
 		let disposed = false;
-		const wrapUp = async.once((success: boolean) => {
+		const wrapUp = once((success: boolean) => {
 			if (!disposed) {
 				disposed = true;
 				if (success) {
-					const raw = {
-						uri,
-						lineNumber: this.lineNumber,
-						enabled: true,
-						condition: this.inputBox.value
-					};
-
 					// if there is already a breakpoint on this location - remove it.
-					const oldBreakpoint = this.debugService.getModel().getBreakpoints()
-						.filter(bp => bp.lineNumber === this.lineNumber && bp.source.uri.toString() === uri.toString()).pop();
-					if (oldBreakpoint) {
-						this.debugService.removeBreakpoints(oldBreakpoint.getId()).done(null, errors.onUnexpectedError);
+
+					let condition = this.breakpoint && this.breakpoint.condition;
+					let hitCondition = this.breakpoint && this.breakpoint.hitCondition;
+
+					if (this.hitCountContext) {
+						hitCondition = this.inputBox.value;
+						if (this.conditionInput) {
+							condition = this.conditionInput;
+						}
+					} else {
+						condition = this.inputBox.value;
+						if (this.hitCountInput) {
+							hitCondition = this.hitCountInput;
+						}
 					}
 
-					this.debugService.addBreakpoints([raw]).done(null, errors.onUnexpectedError);
+					if (this.breakpoint) {
+						this.debugService.updateBreakpoints(this.breakpoint.uri, {
+							[this.breakpoint.getId()]: {
+								condition,
+								hitCondition,
+								verified: this.breakpoint.verified
+							}
+						}, false);
+					} else {
+						this.debugService.addBreakpoints(this.editor.getModel().uri, [{
+							lineNumber: this.lineNumber,
+							column: this.breakpoint ? this.breakpoint.column : undefined,
+							enabled: true,
+							condition,
+							hitCondition
+						}]).done(null, errors.onUnexpectedError);
+					}
 				}
 
 				this.dispose();
@@ -101,8 +152,8 @@ export class BreakpointWidget extends ZoneWidget {
 		});
 
 		this.toDispose.push(dom.addStandardDisposableListener(this.inputBox.inputElement, 'keydown', (e: IKeyboardEvent) => {
-			const isEscape = e.equals(CommonKeybindings.ESCAPE);
-			const isEnter = e.equals(CommonKeybindings.ENTER);
+			const isEscape = e.equals(KeyCode.Escape);
+			const isEnter = e.equals(KeyCode.Enter);
 			if (isEscape || isEnter) {
 				e.stopPropagation();
 				wrapUp(isEnter);
@@ -112,15 +163,7 @@ export class BreakpointWidget extends ZoneWidget {
 
 	public dispose(): void {
 		super.dispose();
-		this.breakpointWidgetVisible.reset();
-		BreakpointWidget.INSTANCE = undefined;
 		lifecycle.dispose(this.toDispose);
 		setTimeout(() => this.editor.focus(), 0);
 	}
 }
-
-CommonEditorRegistry.registerEditorCommand(CLOSE_BREAKPOINT_WIDGET_COMMAND_ID, CommonEditorRegistry.commandWeight(8), { primary: KeyCode.Escape, secondary: [KeyMod.Shift | KeyCode.Escape] }, false, CONTEXT_BREAKPOINT_WIDGET_VISIBLE, (ctx, editor, args) => {
-	if (BreakpointWidget.INSTANCE) {
-		BreakpointWidget.INSTANCE.dispose();
-	}
-});

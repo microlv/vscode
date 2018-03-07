@@ -7,38 +7,48 @@
 
 import 'vs/css!./media/editorpart';
 import 'vs/workbench/browser/parts/editor/editor.contribution';
-import {TPromise} from 'vs/base/common/winjs.base';
-import {Registry} from 'vs/platform/platform';
-import timer = require('vs/base/common/timer');
-import {Dimension, Builder, $} from 'vs/base/browser/builder';
+import { TPromise } from 'vs/base/common/winjs.base';
+import { Registry } from 'vs/platform/registry/common/platform';
+import { Dimension, Builder, $ } from 'vs/base/browser/builder';
 import nls = require('vs/nls');
 import strings = require('vs/base/common/strings');
 import arrays = require('vs/base/common/arrays');
 import types = require('vs/base/common/types');
 import errors = require('vs/base/common/errors');
-import {Scope as MementoScope} from 'vs/workbench/common/memento';
-import {Scope} from 'vs/workbench/browser/actionBarRegistry';
-import {Part} from 'vs/workbench/browser/part';
-import {BaseEditor, EditorDescriptor} from 'vs/workbench/browser/parts/editor/baseEditor';
-import {IEditorRegistry, Extensions as EditorExtensions, EditorInput, EditorOptions, ConfirmResult, EditorInputEvent, IWorkbenchEditorConfiguration, IEditorDescriptor, TextEditorOptions} from 'vs/workbench/common/editor';
-import {SideBySideEditorControl, Rochade, ISideBySideEditorControl, ProgressState} from 'vs/workbench/browser/parts/editor/sideBySideEditorControl';
-import {WorkbenchProgressService} from 'vs/workbench/services/progress/browser/progressService';
-import {GroupArrangement} from 'vs/workbench/services/group/common/groupService';
-import {IConfigurationService} from 'vs/platform/configuration/common/configuration';
-import {IEditorPart} from 'vs/workbench/services/editor/browser/editorService';
-import {IPartService} from 'vs/workbench/services/part/common/partService';
-import {Position, POSITIONS, Direction} from 'vs/platform/editor/common/editor';
-import {IStorageService} from 'vs/platform/storage/common/storage';
-import {IEventService} from 'vs/platform/event/common/event';
-import {IInstantiationService} from 'vs/platform/instantiation/common/instantiation';
-import {ServiceCollection} from 'vs/platform/instantiation/common/serviceCollection';
-import {IMessageService, IMessageWithAction, Severity} from 'vs/platform/message/common/message';
-import {ITelemetryService} from 'vs/platform/telemetry/common/telemetry';
-import {IEditorGroupService} from 'vs/workbench/services/group/common/groupService';
-import {IProgressService} from 'vs/platform/progress/common/progress';
-import {BaseTextEditor} from 'vs/workbench/browser/parts/editor/textEditor';
-import {EditorStacksModel, EditorGroup, EditorIdentifier} from 'vs/workbench/common/editor/editorStacksModel';
-import Event, {Emitter} from 'vs/base/common/event';
+import * as objects from 'vs/base/common/objects';
+import { getCodeEditor } from 'vs/editor/browser/services/codeEditorService';
+import { toErrorMessage } from 'vs/base/common/errorMessage';
+import { Scope as MementoScope } from 'vs/workbench/common/memento';
+import { Part } from 'vs/workbench/browser/part';
+import { BaseEditor } from 'vs/workbench/browser/parts/editor/baseEditor';
+import { EditorInput, EditorOptions, ConfirmResult, IWorkbenchEditorConfiguration, TextEditorOptions, SideBySideEditorInput, TextCompareEditorVisible, TEXT_DIFF_EDITOR_ID, EditorOpeningEvent, IEditorOpeningEvent } from 'vs/workbench/common/editor';
+import { EditorGroupsControl, Rochade, IEditorGroupsControl, ProgressState } from 'vs/workbench/browser/parts/editor/editorGroupsControl';
+import { WorkbenchProgressService } from 'vs/workbench/services/progress/browser/progressService';
+import { IEditorGroupService, GroupOrientation, GroupArrangement, IEditorTabOptions, IMoveOptions } from 'vs/workbench/services/group/common/groupService';
+import { IConfigurationService, IConfigurationChangeEvent } from 'vs/platform/configuration/common/configuration';
+import { IEditorPart } from 'vs/workbench/services/editor/common/editorService';
+import { IPartService } from 'vs/workbench/services/part/common/partService';
+import { Position, POSITIONS, Direction, IEditor } from 'vs/platform/editor/common/editor';
+import { IStorageService } from 'vs/platform/storage/common/storage';
+import { IInstantiationService, ServicesAccessor } from 'vs/platform/instantiation/common/instantiation';
+import { ServiceCollection } from 'vs/platform/instantiation/common/serviceCollection';
+import { ITelemetryService } from 'vs/platform/telemetry/common/telemetry';
+import { IProgressService } from 'vs/platform/progress/common/progress';
+import { EditorStacksModel, EditorGroup, EditorIdentifier, EditorCloseEvent } from 'vs/workbench/common/editor/editorStacksModel';
+import Event, { Emitter } from 'vs/base/common/event';
+import { IContextKey, IContextKeyService } from 'vs/platform/contextkey/common/contextkey';
+import { IThemeService } from 'vs/platform/theme/common/themeService';
+import { editorBackground } from 'vs/platform/theme/common/colorRegistry';
+import { EDITOR_GROUP_BACKGROUND } from 'vs/workbench/common/theme';
+import { createCSSRule } from 'vs/base/browser/dom';
+import { IEnvironmentService } from 'vs/platform/environment/common/environment';
+import { join } from 'vs/base/common/paths';
+import { IEditorDescriptor, IEditorRegistry, Extensions as EditorExtensions } from 'vs/workbench/browser/editor';
+import { ThrottledEmitter } from 'vs/base/common/async';
+import { isCodeEditor } from 'vs/editor/browser/editorBrowser';
+import { isUndefinedOrNull } from 'vs/base/common/types';
+import { INotificationService, Severity, INotificationActions } from 'vs/platform/notification/common/notification';
+import { isErrorWithActions } from 'vs/base/common/errors';
 
 class ProgressMonitor {
 
@@ -54,7 +64,8 @@ class ProgressMonitor {
 }
 
 interface IEditorPartUIState {
-	widthRatio: number[];
+	ratio: number[];
+	groupOrientation: GroupOrientation;
 }
 
 interface IEditorReplacement extends EditorIdentifier {
@@ -64,6 +75,10 @@ interface IEditorReplacement extends EditorIdentifier {
 	options?: EditorOptions;
 }
 
+export type ICloseEditorsFilter = { except?: EditorInput, direction?: Direction, savedOnly?: boolean };
+export type ICloseEditorsByFilterArgs = { positionOne?: ICloseEditorsFilter, positionTwo?: ICloseEditorsFilter, positionThree?: ICloseEditorsFilter };
+export type ICloseEditorsArgs = { positionOne?: EditorInput[], positionTwo?: EditorInput[], positionThree?: EditorInput[] };
+
 /**
  * The editor part is the container for editors in the workbench. Based on the editor input being opened, it asks the registered
  * editor for the given input to show the contents. The editor part supports up to 3 side-by-side editors.
@@ -72,47 +87,64 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 
 	public _serviceBrand: any;
 
-	private static GROUP_LEFT_LABEL = nls.localize('leftGroup', "Left");
-	private static GROUP_CENTER_LABEL = nls.localize('centerGroup', "Center");
-	private static GROUP_RIGHT_LABEL = nls.localize('rightGroup', "Right");
+	private static readonly GROUP_LEFT = nls.localize('groupOneVertical', "Left");
+	private static readonly GROUP_CENTER = nls.localize('groupTwoVertical', "Center");
+	private static readonly GROUP_RIGHT = nls.localize('groupThreeVertical', "Right");
+	private static readonly GROUP_TOP = nls.localize('groupOneHorizontal', "Top");
+	private static readonly GROUP_MIDDLE = nls.localize('groupTwoHorizontal', "Center");
+	private static readonly GROUP_BOTTOM = nls.localize('groupThreeHorizontal', "Bottom");
 
-	private static EDITOR_PART_UI_STATE_STORAGE_KEY = 'editorpart.uiState';
+	private static readonly EDITOR_PART_UI_STATE_STORAGE_KEY = 'editorpart.uiState';
 
 	private dimension: Dimension;
-	private sideBySideControl: ISideBySideEditorControl;
-	private memento: any;
+	private editorGroupsControl: IEditorGroupsControl;
+	private memento: object;
 	private stacks: EditorStacksModel;
-	private previewEditors: boolean;
+	private tabOptions: IEditorTabOptions;
+	private forceHideTabs: boolean;
+	private doNotFireTabOptionsChanged: boolean;
+	private revealIfOpen: boolean;
 
-	private _onEditorsChanged: Emitter<void>;
-	private _onEditorOpening: Emitter<EditorInputEvent>;
-	private _onEditorsMoved: Emitter<void>;
+	private _onEditorsChanged: ThrottledEmitter<void>;
+	private _onEditorOpening: Emitter<IEditorOpeningEvent>;
+	private _onEditorGroupMoved: Emitter<void>;
 	private _onEditorOpenFail: Emitter<EditorInput>;
+	private _onGroupOrientationChanged: Emitter<void>;
+	private _onTabOptionsChanged: Emitter<IEditorTabOptions>;
+
+	private textCompareEditorVisible: IContextKey<boolean>;
 
 	// The following data structures are partitioned into array of Position as provided by Services.POSITION array
 	private visibleEditors: BaseEditor[];
 	private instantiatedEditors: BaseEditor[][];
-	private mapEditorInstantiationPromiseToEditor: { [editorId: string]: TPromise<BaseEditor>; }[];
 	private editorOpenToken: number[];
 	private pendingEditorInputsToClose: EditorIdentifier[];
 	private pendingEditorInputCloseTimeout: number;
 
+	private onLayoutEmitter = new Emitter<Dimension>();
+	public onLayout = this.onLayoutEmitter.event;
+
 	constructor(
 		id: string,
-		@IMessageService private messageService: IMessageService,
-		@IEventService private eventService: IEventService,
+		restoreFromStorage: boolean,
+		@INotificationService private notificationService: INotificationService,
 		@ITelemetryService private telemetryService: ITelemetryService,
 		@IStorageService private storageService: IStorageService,
 		@IPartService private partService: IPartService,
 		@IConfigurationService private configurationService: IConfigurationService,
-		@IInstantiationService private instantiationService: IInstantiationService
+		@IContextKeyService contextKeyService: IContextKeyService,
+		@IInstantiationService private instantiationService: IInstantiationService,
+		@IThemeService themeService: IThemeService,
+		@IEnvironmentService private environmentService: IEnvironmentService
 	) {
-		super(id);
+		super(id, { hasTitle: false }, themeService);
 
-		this._onEditorsChanged = new Emitter<void>();
-		this._onEditorOpening = new Emitter<EditorInputEvent>();
-		this._onEditorsMoved = new Emitter<void>();
+		this._onEditorsChanged = new ThrottledEmitter<void>();
+		this._onEditorOpening = new Emitter<IEditorOpeningEvent>();
+		this._onEditorGroupMoved = new Emitter<void>();
 		this._onEditorOpenFail = new Emitter<EditorInput>();
+		this._onGroupOrientationChanged = new Emitter<void>();
+		this._onTabOptionsChanged = new Emitter<IEditorTabOptions>();
 
 		this.visibleEditors = [];
 
@@ -120,40 +152,102 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 
 		this.instantiatedEditors = arrays.fill(POSITIONS.length, () => []);
 
-		this.mapEditorInstantiationPromiseToEditor = arrays.fill(POSITIONS.length, () => Object.create(null));
-
 		this.pendingEditorInputsToClose = [];
 		this.pendingEditorInputCloseTimeout = null;
 
-		this.stacks = this.instantiationService.createInstance(EditorStacksModel);
+		this.stacks = this.instantiationService.createInstance(EditorStacksModel, restoreFromStorage);
 
-		const editorConfig = configurationService.getConfiguration<IWorkbenchEditorConfiguration>().workbench.editor;
-		this.previewEditors = editorConfig.enablePreview;
+		this.textCompareEditorVisible = TextCompareEditorVisible.bindTo(contextKeyService);
 
-		this.telemetryService.publicLog('workbenchEditorConfiguration', editorConfig);
+		const config = configurationService.getValue<IWorkbenchEditorConfiguration>();
+		if (config && config.workbench && config.workbench.editor) {
+			const editorConfig = config.workbench.editor;
 
+			this.tabOptions = {
+				previewEditors: editorConfig.enablePreview,
+				showIcons: editorConfig.showIcons,
+				showTabs: editorConfig.showTabs,
+				tabCloseButton: editorConfig.tabCloseButton,
+				tabSizing: editorConfig.tabSizing,
+				labelFormat: editorConfig.labelFormat,
+				iconTheme: config.workbench.iconTheme
+			};
+
+			this.revealIfOpen = editorConfig.revealIfOpen;
+		} else {
+			this.tabOptions = {
+				previewEditors: true,
+				showIcons: false,
+				showTabs: true,
+				tabCloseButton: 'right',
+				tabSizing: 'fit',
+				labelFormat: 'default',
+				iconTheme: 'vs-seti'
+			};
+
+			this.revealIfOpen = false;
+		}
+
+		this.initStyles();
 		this.registerListeners();
+	}
+
+	private initStyles(): void {
+
+		// Letterpress Background when Empty
+		createCSSRule('.vs .monaco-workbench > .part.editor.empty', `background-image: url('${join(this.environmentService.appRoot, 'resources/letterpress.svg')}')`);
+		createCSSRule('.vs-dark .monaco-workbench > .part.editor.empty', `background-image: url('${join(this.environmentService.appRoot, 'resources/letterpress-dark.svg')}')`);
+		createCSSRule('.hc-black .monaco-workbench > .part.editor.empty', `background-image: url('${join(this.environmentService.appRoot, 'resources/letterpress-hc.svg')}')`);
 	}
 
 	private registerListeners(): void {
 		this.toUnbind.push(this.stacks.onEditorDirty(identifier => this.onEditorDirty(identifier)));
 		this.toUnbind.push(this.stacks.onEditorDisposed(identifier => this.onEditorDisposed(identifier)));
-		this.toUnbind.push(this.configurationService.onDidUpdateConfiguration(e => this.onConfigurationUpdated(e.config)));
+		this.toUnbind.push(this.stacks.onEditorOpened(identifier => this.onEditorOpened(identifier)));
+		this.toUnbind.push(this.stacks.onEditorClosed(event => this.onEditorClosed(event)));
+		this.toUnbind.push(this.stacks.onGroupOpened(event => this.onEditorGroupOpenedOrClosed()));
+		this.toUnbind.push(this.stacks.onGroupClosed(event => this.onEditorGroupOpenedOrClosed()));
+		this.toUnbind.push(this.configurationService.onDidChangeConfiguration(e => this.onConfigurationUpdated(e)));
 	}
 
-	private onConfigurationUpdated(configuration: IWorkbenchEditorConfiguration): void {
-		const newPreviewEditors = configuration.workbench.editor.enablePreview;
+	private onEditorGroupOpenedOrClosed(): void {
+		this.updateStyles();
+	}
 
-		// Pin all preview editors of the user chose to disable preview
-		if (this.previewEditors !== newPreviewEditors && !newPreviewEditors) {
-			this.stacks.groups.forEach(group => {
-				if (group.previewEditor) {
-					this.pinEditor(group, group.previewEditor);
+	private onConfigurationUpdated(event: IConfigurationChangeEvent): void {
+		if (event.affectsConfiguration('workbench.editor') || event.affectsConfiguration('workbench.iconTheme')) {
+			const configuration = this.configurationService.getValue<IWorkbenchEditorConfiguration>();
+			if (configuration && configuration.workbench && configuration.workbench.editor) {
+				const editorConfig = configuration.workbench.editor;
+
+				// Pin all preview editors of the user chose to disable preview
+				const newPreviewEditors = editorConfig.enablePreview;
+				if (this.tabOptions.previewEditors !== newPreviewEditors && !newPreviewEditors) {
+					this.stacks.groups.forEach(group => {
+						if (group.previewEditor) {
+							this.pinEditor(group, group.previewEditor);
+						}
+					});
 				}
-			});
-		}
 
-		this.previewEditors = newPreviewEditors;
+				const oldTabOptions = objects.deepClone(this.tabOptions);
+				this.tabOptions = {
+					previewEditors: newPreviewEditors,
+					showIcons: editorConfig.showIcons,
+					tabCloseButton: editorConfig.tabCloseButton,
+					tabSizing: editorConfig.tabSizing,
+					showTabs: this.forceHideTabs ? false : editorConfig.showTabs,
+					labelFormat: editorConfig.labelFormat,
+					iconTheme: configuration.workbench.iconTheme
+				};
+
+				if (!this.doNotFireTabOptionsChanged && !objects.equals(oldTabOptions, this.tabOptions)) {
+					this._onTabOptionsChanged.fire(this.tabOptions);
+				}
+
+				this.revealIfOpen = editorConfig.revealIfOpen;
+			}
+		}
 	}
 
 	private onEditorDirty(identifier: EditorIdentifier): void {
@@ -167,65 +261,106 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 		this.startDelayedCloseEditorsFromInputDispose();
 	}
 
+	private onEditorOpened(identifier: EditorIdentifier): void {
+		/* __GDPR__
+			"editorOpened" : {
+				"${include}": [
+					"${EditorTelemetryDescriptor}"
+				]
+			}
+		*/
+		this.telemetryService.publicLog('editorOpened', identifier.editor.getTelemetryDescriptor());
+	}
+
+	private onEditorClosed(event: EditorCloseEvent): void {
+		/* __GDPR__
+			"editorClosed" : {
+				"${include}": [
+					"${EditorTelemetryDescriptor}"
+				]
+			}
+		*/
+		this.telemetryService.publicLog('editorClosed', event.editor.getTelemetryDescriptor());
+	}
+
+	public hideTabs(forceHide: boolean): void {
+		this.forceHideTabs = forceHide;
+		const config = this.configurationService.getValue<IWorkbenchEditorConfiguration>();
+		this.tabOptions.showTabs = forceHide ? false : config && config.workbench && config.workbench.editor && config.workbench.editor.showTabs;
+		this._onTabOptionsChanged.fire(this.tabOptions);
+	}
+
+	public resizeGroup(position: Position, groupSizeChange: number): void {
+		this.editorGroupsControl.resizeGroup(position, groupSizeChange);
+	}
+
 	public get onEditorsChanged(): Event<void> {
 		return this._onEditorsChanged.event;
 	}
 
-	public get onEditorOpening(): Event<EditorInputEvent> {
+	public get onEditorOpening(): Event<IEditorOpeningEvent> {
 		return this._onEditorOpening.event;
 	}
 
-	public get onEditorsMoved(): Event<void> {
-		return this._onEditorsMoved.event;
+	public get onEditorGroupMoved(): Event<void> {
+		return this._onEditorGroupMoved.event;
 	}
 
 	public get onEditorOpenFail(): Event<EditorInput> {
 		return this._onEditorOpenFail.event;
 	}
 
-	public openEditor(input: EditorInput, options?: EditorOptions, sideBySide?: boolean): TPromise<BaseEditor>;
-	public openEditor(input: EditorInput, options?: EditorOptions, position?: Position, widthRatios?: number[]): TPromise<BaseEditor>;
-	public openEditor(input: EditorInput, options?: EditorOptions, arg3?: any, widthRatios?: number[]): TPromise<BaseEditor> {
+	public get onGroupOrientationChanged(): Event<void> {
+		return this._onGroupOrientationChanged.event;
+	}
 
-		// Normalize some values
-		if (!options) { options = null; }
+	public get onTabOptionsChanged(): Event<IEditorTabOptions> {
+		return this._onTabOptionsChanged.event;
+	}
 
-		// Determine position to open editor in (left, center, right)
-		const position = this.findPosition(input, options, arg3, widthRatios);
+	public getTabOptions(): IEditorTabOptions {
+		return this.tabOptions;
+	}
+
+	public openEditor(input: EditorInput, options?: EditorOptions, sideBySide?: boolean): TPromise<IEditor>;
+	public openEditor(input: EditorInput, options?: EditorOptions, position?: Position, ratio?: number[]): TPromise<IEditor>;
+	public openEditor(input: EditorInput, options?: EditorOptions, arg3?: any, ratio?: number[]): TPromise<IEditor> {
+		if (!options) {
+			options = null;
+		}
+
+		// Determine position to open editor in (one, two, three)
+		const position = this.findPosition(input, options, arg3, ratio);
 
 		// Some conditions under which we prevent the request
 		if (
-			!input ||																		// no input
-			position === null ||															// invalid position
-			Object.keys(this.mapEditorInstantiationPromiseToEditor[position]).length > 0 ||	// pending editor load
-			this.sideBySideControl.isDragging()												// pending editor DND
+			!input ||								// no input
+			position === null ||					// invalid position
+			!this.editorGroupsControl ||			// too early
+			this.editorGroupsControl.isDragging()	// pending editor DND
 		) {
-			return TPromise.as<BaseEditor>(null);
+			return TPromise.wrap<BaseEditor>(null);
 		}
 
-		// Emit early open event to allow for veto
-		const event = new EditorInputEvent(input);
+		// Editor opening event (can be prevented and overridden)
+		const event = new EditorOpeningEvent(input, options, position);
 		this._onEditorOpening.fire(event);
-		if (event.isPrevented()) {
-			return TPromise.as<BaseEditor>(null);
+		const prevented = event.isPrevented();
+		if (prevented) {
+			return prevented();
 		}
+
+		// Open through UI
+		return this.doOpenEditor(position, input, options, ratio);
+	}
+
+	private doOpenEditor(position: Position, input: EditorInput, options: EditorOptions, ratio: number[]): TPromise<BaseEditor> {
 
 		// We need an editor descriptor for the input
 		const descriptor = Registry.as<IEditorRegistry>(EditorExtensions.Editors).getEditor(input);
 		if (!descriptor) {
-			return TPromise.wrapError(new Error(strings.format('Can not find a registered editor for the input {0}', input)));
+			return TPromise.wrapError<BaseEditor>(new Error(strings.format('Can not find a registered editor for the input {0}', input)));
 		}
-
-		// Opened to the side
-		if (position !== Position.LEFT) {
-			this.telemetryService.publicLog('workbenchSideEditorOpened', { position: position });
-		}
-
-		// Open through UI
-		return this.doOpenEditor(position, descriptor, input, options, widthRatios);
-	}
-
-	private doOpenEditor(position: Position, descriptor: IEditorDescriptor, input: EditorInput, options: EditorOptions, widthRatios: number[]): TPromise<BaseEditor> {
 
 		// Update stacks: We do this early on before the UI is there because we want our stacks model to have
 		// a consistent view of the editor world and updating it later async after the UI is there will cause
@@ -234,14 +369,15 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 		// This can however cause a race condition where the stacks model indicates the opened editor is there
 		// while the UI is not yet ready. Clients have to deal with this fact and we have to make sure that the
 		// stacks model gets updated if any of the UI updating fails with an error.
-		const group = this.ensureGroup(position, !options || !options.preserveFocus);
-		const pinned = !this.previewEditors || (options && (options.pinned || typeof options.index === 'number')) || input.isDirty();
+		const [group, newGroupOpened] = this.ensureGroup(position, !options || !options.preserveFocus);
+		const pinned = !this.tabOptions.previewEditors || (options && (options.pinned || typeof options.index === 'number')) || input.isDirty();
+
 		const active = (group.count === 0) || !options || !options.inactive;
 		group.openEditor(input, { active, pinned, index: options && options.index });
 
 		// Return early if the editor is to be open inactive and there are other editors in this group to show
 		if (!active) {
-			return TPromise.as<BaseEditor>(null);
+			return TPromise.wrap<BaseEditor>(null);
 		}
 
 		// Progress Monitor & Ref Counting
@@ -251,145 +387,127 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 			const position = this.stacks.positionOfGroup(group); // might have changed due to a rochade meanwhile
 
 			if (editorOpenToken === this.editorOpenToken[position]) {
-				this.sideBySideControl.updateProgress(position, ProgressState.INFINITE);
+				this.editorGroupsControl.updateProgress(position, ProgressState.INFINITE);
 			}
 		}));
 
 		// Show editor
-		return this.doShowEditor(group, descriptor, input, options, widthRatios, monitor).then(editor => {
-			if (!editor) {
-				return TPromise.as<BaseEditor>(null); // canceled or other error
-			}
+		const editor = this.doShowEditor(group, descriptor, input, options, ratio, monitor);
+		if (!editor) {
+			return TPromise.wrap<BaseEditor>(null); // canceled or other error
+		}
 
-			// Set input to editor
-			return this.doSetInput(group, editor, input, options, monitor);
-		});
+		// Set input to editor
+		const inputPromise = this.doSetInput(group, editor, input, options, monitor);
+
+		// A new active group got opened. Since this involves updating the title area controls to show
+		// the new editor and actions we trigger a direct update of title controls from here to avoid
+		// some UI flickering if we rely on the event handlers that all use schedulers.
+		// The reason we can trigger this now is that after the input is set to the editor group, the
+		// resource context is updated and the correct number of actions will be resolved from the title
+		// area.
+		if (newGroupOpened && this.stacks.isActive(group)) {
+			this.editorGroupsControl.updateTitleAreas(true /* refresh new active group */);
+		}
+
+		return inputPromise;
 	}
 
-	private doShowEditor(group: EditorGroup, descriptor: IEditorDescriptor, input: EditorInput, options: EditorOptions, widthRatios: number[], monitor: ProgressMonitor): TPromise<BaseEditor> {
-		const position = this.stacks.positionOfGroup(group);
+	private doShowEditor(group: EditorGroup, descriptor: IEditorDescriptor, input: EditorInput, options: EditorOptions, ratio: number[], monitor: ProgressMonitor): BaseEditor {
+		let position = this.stacks.positionOfGroup(group);
 		const editorAtPosition = this.visibleEditors[position];
 
 		// Return early if the currently visible editor can handle the input
 		if (editorAtPosition && descriptor.describes(editorAtPosition)) {
-			return TPromise.as(editorAtPosition);
+			return editorAtPosition;
 		}
 
 		// Hide active one first
 		if (editorAtPosition) {
-			this.doHideEditor(position, false);
+			this.doHideEditor(editorAtPosition, position, false);
 		}
 
 		// Create Editor
-		const timerEvent = timer.start(timer.Topic.WORKBENCH, strings.format('Creating Editor: {0}', descriptor.getName()));
-		return this.doCreateEditor(group, descriptor, monitor).then(editor => {
-			const position = this.stacks.positionOfGroup(group); // might have changed due to a rochade meanwhile
+		const editor = this.doCreateEditor(group, descriptor, monitor);
+		position = this.stacks.positionOfGroup(group); // might have changed due to a rochade meanwhile
 
-			// Make sure that the user meanwhile did not open another editor or something went wrong
-			if (!editor || !this.visibleEditors[position] || editor.getId() !== this.visibleEditors[position].getId()) {
-				timerEvent.stop();
-				monitor.cancel();
+		// Make sure that the user meanwhile did not open another editor or something went wrong
+		if (!editor || !this.visibleEditors[position] || editor.getId() !== this.visibleEditors[position].getId()) {
+			monitor.cancel();
 
-				return null;
-			}
+			return null;
+		}
 
-			// Show in side by side control
-			this.sideBySideControl.show(editor, position, options && options.preserveFocus, widthRatios);
+		// Show in side by side control
+		this.editorGroupsControl.show(editor, position, options && options.preserveFocus, ratio);
 
-			// Indicate to editor that it is now visible
-			editor.setVisible(true, position);
+		// Indicate to editor that it is now visible
+		editor.setVisible(true, position);
 
-			// Make sure the editor is layed out
-			this.sideBySideControl.layout(position);
+		// Update text compare editor visible context
+		this.updateTextCompareEditorVisible();
 
-			timerEvent.stop();
+		// Make sure the editor is layed out
+		this.editorGroupsControl.layout(position);
 
-			return editor;
-
-		}, e => this.messageService.show(Severity.Error, types.isString(e) ? new Error(e) : e));
+		return editor;
 	}
 
-	private doCreateEditor(group: EditorGroup, descriptor: IEditorDescriptor, monitor: ProgressMonitor): TPromise<BaseEditor> {
+	private doCreateEditor(group: EditorGroup, descriptor: IEditorDescriptor, monitor: ProgressMonitor): BaseEditor {
 
 		// Instantiate editor
-		return this.doInstantiateEditor(group, descriptor).then(editor => {
-			const position = this.stacks.positionOfGroup(group); // might have changed due to a rochade meanwhile
+		const editor = this.doInstantiateEditor(group, descriptor);
+		const position = this.stacks.positionOfGroup(group); // might have changed due to a rochade meanwhile
 
-			// Make sure that the user meanwhile did not open another editor
-			if (monitor.token !== this.editorOpenToken[position]) {
-				monitor.cancel();
+		// Make sure that the user meanwhile did not open another editor
+		if (monitor.token !== this.editorOpenToken[position]) {
+			monitor.cancel();
 
-				return null;
-			}
+			return null;
+		}
 
-			// Remember Editor at position
-			this.visibleEditors[position] = editor;
+		// Remember Editor at position
+		this.visibleEditors[position] = editor;
 
-			// Create editor as needed
-			if (!editor.getContainer()) {
-				editor.create($().div({
-					'class': 'editor-container',
-					'role': 'tabpanel',
-					id: descriptor.getId()
-				}));
-			}
+		// Create editor as needed
+		if (!editor.getContainer()) {
+			editor.create($().div({
+				'class': 'editor-container',
+				'role': 'tabpanel',
+				id: descriptor.getId()
+			}));
+		}
 
-			return editor;
-		});
+		return editor;
 	}
 
-	private doInstantiateEditor(group: EditorGroup, descriptor: IEditorDescriptor): TPromise<BaseEditor> {
+	private doInstantiateEditor(group: EditorGroup, descriptor: IEditorDescriptor): BaseEditor {
 		const position = this.stacks.positionOfGroup(group);
 
 		// Return early if already instantiated
 		const instantiatedEditor = this.instantiatedEditors[position].filter(e => descriptor.describes(e))[0];
 		if (instantiatedEditor) {
-			return TPromise.as(instantiatedEditor);
-		}
-
-		// Return early if editor is being instantiated at the same time from a previous call
-		const pendingEditorInstantiate = this.mapEditorInstantiationPromiseToEditor[position][descriptor.getId()];
-		if (pendingEditorInstantiate) {
-			return pendingEditorInstantiate;
+			return instantiatedEditor;
 		}
 
 		// Otherwise instantiate
-		const progressService = new WorkbenchProgressService(this.eventService, this.sideBySideControl.getProgressBar(position), descriptor.getId(), true);
-		const editorInstantiationService = this.sideBySideControl.getInstantiationService(position).createChild(new ServiceCollection([IProgressService, progressService]));
-		let loaded = false;
+		const progressService = this.instantiationService.createInstance(WorkbenchProgressService, this.editorGroupsControl.getProgressBar(position), descriptor.getId(), true);
+		const editorInstantiationService = this.editorGroupsControl.getInstantiationService(position).createChild(new ServiceCollection([IProgressService, progressService]));
 
-		const onInstantiate = (arg: BaseEditor | Error): TPromise<BaseEditor | Error> => {
-			const position = this.stacks.positionOfGroup(group); // might have changed due to a rochade meanwhile
+		const editor = descriptor.instantiate(editorInstantiationService);
 
-			loaded = true;
-			delete this.mapEditorInstantiationPromiseToEditor[position][descriptor.getId()];
+		this.instantiatedEditors[position].push(editor);
 
-			if (arg instanceof BaseEditor) {
-				this.instantiatedEditors[position].push(arg);
-
-				return TPromise.as(arg);
-			}
-
-			return TPromise.wrapError(arg);
-		};
-
-		const instantiateEditorPromise = editorInstantiationService.createInstance(<EditorDescriptor>descriptor).then(onInstantiate, onInstantiate);
-
-		if (!loaded) {
-			this.mapEditorInstantiationPromiseToEditor[position][descriptor.getId()] = instantiateEditorPromise;
-		}
-
-		return instantiateEditorPromise;
+		return editor;
 	}
 
 	private doSetInput(group: EditorGroup, editor: BaseEditor, input: EditorInput, options: EditorOptions, monitor: ProgressMonitor): TPromise<BaseEditor> {
 
 		// Emit Input-Changed Event as appropiate
-		const previousInput = editor.getInput();
+		const previousInput = editor.input;
 		const inputChanged = (!previousInput || !previousInput.matches(input) || (options && options.forceOpen));
 
 		// Call into Editor
-		const timerEvent = timer.start(timer.Topic.WORKBENCH, strings.format('Set Editor Input: {0}', input.getName()));
 		return editor.setInput(input, options).then(() => {
 
 			// Stop loading promise if any
@@ -407,60 +525,61 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 			}
 
 			// Progress Done
-			this.sideBySideControl.updateProgress(position, ProgressState.DONE);
+			this.editorGroupsControl.updateProgress(position, ProgressState.DONE);
 
 			// Emit Change Event (if input changed)
 			if (inputChanged) {
 				this._onEditorsChanged.fire();
 			}
 
-			timerEvent.stop();
-
 			// Fullfill promise with Editor that is being used
 			return editor;
 
-		}, e => this.doHandleSetInputError(e, group, editor, input, options, monitor));
+		}, e => {
+			this.doHandleSetInputError(e, group, editor, input, options, monitor);
+			return null;
+		});
 	}
 
-	private doHandleSetInputError(e: Error | IMessageWithAction, group: EditorGroup, editor: BaseEditor, input: EditorInput, options: EditorOptions, monitor: ProgressMonitor): void {
+	private doHandleSetInputError(error: Error, group: EditorGroup, editor: BaseEditor, input: EditorInput, options: EditorOptions, monitor: ProgressMonitor): void {
 		const position = this.stacks.positionOfGroup(group);
 
 		// Stop loading promise if any
 		monitor.cancel();
 
 		// Report error only if this was not us restoring previous error state
-		if (this.partService.isCreated() && !errors.isPromiseCanceledError(e)) {
-			const errorMessage = nls.localize('editorOpenError', "Unable to open '{0}': {1}.", input.getName(), errors.toErrorMessage(e));
-
-			let error: any;
-			if (e && (<IMessageWithAction>e).actions && (<IMessageWithAction>e).actions.length) {
-				error = errors.create(errorMessage, { actions: (<IMessageWithAction>e).actions }); // Support error actions from thrower
-			} else {
-				error = errorMessage;
+		if (this.partService.isCreated() && !errors.isPromiseCanceledError(error)) {
+			const actions: INotificationActions = { primary: [] };
+			if (isErrorWithActions(error)) {
+				actions.primary = error.actions;
 			}
 
-			this.messageService.show(Severity.Error, types.isString(error) ? new Error(error) : error);
+			this.notificationService.notify({
+				severity: Severity.Error,
+				message: nls.localize('editorOpenError', "Unable to open '{0}': {1}.", input.getName(), toErrorMessage(error)),
+				actions
+			});
 		}
 
-		this.sideBySideControl.updateProgress(position, ProgressState.DONE);
+		this.editorGroupsControl.updateProgress(position, ProgressState.DONE);
 
 		// Event
 		this._onEditorOpenFail.fire(input);
 
 		// Recover by closing the active editor (if the input is still the active one)
 		if (group.activeEditor === input) {
-			this.doCloseActiveEditor(group);
+			this.doCloseActiveEditor(group, !(options && options.preserveFocus) /* still preserve focus as needed */);
 		}
 	}
 
 	public closeEditor(position: Position, input: EditorInput): TPromise<void> {
 		const group = this.stacks.groupAt(position);
 		if (!group) {
-			return TPromise.as<void>(null);
+			return TPromise.wrap<void>(null);
 		}
 
 		// Check for dirty and veto
-		return this.handleDirty([{ group, editor: input }]).then(veto => {
+		return this.handleDirty([{ group, editor: input }], true /* ignore if opened in other group */).then(veto => {
 			if (veto) {
 				return;
 			}
@@ -512,8 +631,11 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 		// Update stacks model
 		this.modifyGroups(() => this.stacks.closeGroup(group));
 
-		// Hide Editor
-		this.doHideEditor(position, true);
+		// Hide Editor if there is one
+		const editor = this.visibleEditors[position];
+		if (editor) {
+			this.doHideEditor(editor, position, true);
+		}
 
 		// Emit Change Event
 		this._onEditorsChanged.fire();
@@ -528,23 +650,28 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 			}
 
 			// Explicitly trigger the focus changed handler because the side by side control will not trigger it unless
-			// the user is actively changing focus with the mouse from left to right.
+			// the user is actively changing focus with the mouse from left/top to right/bottom.
 			this.onGroupFocusChanged();
+
+			// Update title area sync to avoid some flickering with actions
+			this.editorGroupsControl.updateTitleAreas();
 		}
 	}
 
-	private doHideEditor(position: Position, layoutAndRochade: boolean): void {
-		const editor = this.visibleEditors[position];
+	private doHideEditor(editor: BaseEditor, position: Position, layoutAndRochade: boolean): void {
 
 		// Hide in side by side control
-		const rochade = this.sideBySideControl.hide(editor, position, layoutAndRochade);
+		const rochade = this.editorGroupsControl.hide(editor, position, layoutAndRochade);
 
 		// Clear any running Progress
-		this.sideBySideControl.updateProgress(position, ProgressState.STOP);
+		this.editorGroupsControl.updateProgress(position, ProgressState.STOP);
 
 		// Indicate to Editor
 		editor.clearInput();
 		editor.setVisible(false);
+
+		// Update text compare editor visible context
+		this.updateTextCompareEditorVisible();
 
 		// Clear active editor
 		this.visibleEditors[position] = null;
@@ -554,113 +681,321 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 
 		// Emit Editor move event
 		if (rochade !== Rochade.NONE) {
-			this._onEditorsMoved.fire();
+			this._onEditorGroupMoved.fire();
 		}
 	}
 
-	public closeAllEditors(except?: Position): TPromise<void> {
+	private updateTextCompareEditorVisible(): void {
+		this.textCompareEditorVisible.set(this.visibleEditors.some(e => e && e.isVisible() && e.getId() === TEXT_DIFF_EDITOR_ID));
+	}
+
+	public closeEditors(positions?: Position[]): TPromise<void>;
+	public closeEditors(position: Position, filter?: ICloseEditorsFilter): TPromise<void>;
+	public closeEditors(position: Position, editors: EditorInput[]): TPromise<void>;
+	public closeEditors(editors: ICloseEditorsByFilterArgs): TPromise<void>;
+	public closeEditors(editors: ICloseEditorsArgs): TPromise<void>;
+	public closeEditors(positionsOrEditors?: Position[] | Position | ICloseEditorsByFilterArgs | ICloseEditorsArgs, filterOrEditors?: ICloseEditorsFilter | EditorInput[]): TPromise<void> {
+
+		// First check for specific position to close
+		if (typeof positionsOrEditors === 'number') {
+			return this.doCloseEditorsAtPosition(positionsOrEditors, filterOrEditors);
+		}
+
+		// Then check for array of positions to close
+		if (Array.isArray(positionsOrEditors) || isUndefinedOrNull(positionsOrEditors)) {
+			return this.doCloseAllEditorsAtPositions(positionsOrEditors as Position[]);
+		}
+
+		// Finally, close specific editors at multiple positions
+		return this.doCloseEditorsAtPositions(positionsOrEditors);
+	}
+
+	private doCloseEditorsAtPositions(editors: ICloseEditorsByFilterArgs | ICloseEditorsArgs): TPromise<void> {
+
+		// Extract editors to close for veto
+		const editorsToClose: EditorIdentifier[] = [];
+		let groupsWithEditorsToClose = 0;
+		POSITIONS.forEach(position => {
+			const details = (position === Position.ONE) ? editors.positionOne : (position === Position.TWO) ? editors.positionTwo : editors.positionThree;
+			if (details && this.stacks.groupAt(position)) {
+				groupsWithEditorsToClose++;
+				editorsToClose.push(...this.extractCloseEditorDetails(position, details).editorsToClose);
+			}
+		});
+
+		// Check for dirty and veto
+		const ignoreDirtyIfOpenedInOtherGroup = (groupsWithEditorsToClose === 1);
+		return this.handleDirty(editorsToClose, ignoreDirtyIfOpenedInOtherGroup).then(veto => {
+			if (veto) {
+				return void 0;
+			}
+
+			// Close by positions starting from last to first to prevent issues when
+			// editor groups close and thus move other editors around that are still open.
+			[Position.THREE, Position.TWO, Position.ONE].forEach(position => {
+				const details = (position === Position.ONE) ? editors.positionOne : (position === Position.TWO) ? editors.positionTwo : editors.positionThree;
+				if (details && this.stacks.groupAt(position)) {
+					const { group, editorsToClose, filter } = this.extractCloseEditorDetails(position, details);
+
+					// Close with filter
+					if (filter) {
+						this.doCloseEditorsWithFilter(group, filter);
+					}
+
+					// Close without filter
+					else {
+						this.doCloseEditors(group, editorsToClose.map(e => e.editor));
+					}
+
+					return void 0;
+				}
+			});
+		});
+	}
+
+	private doCloseAllEditorsAtPositions(positions?: Position[]): TPromise<void> {
 		let groups = this.stacks.groups.reverse(); // start from the end to prevent layout to happen through rochade
 
-		// Remove position to exclude if we have any
-		if (typeof except === 'number') {
-			groups = groups.filter(group => this.stacks.positionOfGroup(group) !== except);
+		// Remove positions that are not being asked for if provided
+		if (Array.isArray(positions)) {
+			groups = groups.filter(group => positions.indexOf(this.stacks.positionOfGroup(group)) >= 0);
 		}
 
 		// Check for dirty and veto
-		const editorsToClose = arrays.flatten(groups.map(group => group.getEditors().map(editor => { return { group, editor }; })));
-
-		return this.handleDirty(editorsToClose).then(veto => {
+		const ignoreDirtyIfOpenedInOtherGroup = (groups.length === 1);
+		return this.handleDirty(arrays.flatten(groups.map(group => group.getEditors(true /* in MRU order */).map(editor => ({ group, editor })))), ignoreDirtyIfOpenedInOtherGroup).then(veto => {
 			if (veto) {
 				return;
 			}
 
-			groups.forEach(group => this.doCloseEditors(group));
+			groups.forEach(group => this.doCloseAllEditorsInGroup(group));
 		});
 	}
 
-	public closeEditors(position: Position, except?: EditorInput, direction?: Direction): TPromise<void> {
+	private doCloseAllEditorsInGroup(group: EditorGroup): void {
+
+		// Update stacks model: remove all non active editors first to prevent opening the next editor in group
+		group.closeEditors(group.activeEditor);
+
+		// Now close active editor in group which will close the group
+		this.doCloseActiveEditor(group);
+	}
+
+	private doCloseEditorsAtPosition(position: Position, filterOrEditors?: ICloseEditorsFilter | EditorInput[]): TPromise<void> {
+		const closeEditorsDetails = this.extractCloseEditorDetails(position, filterOrEditors);
+		if (!closeEditorsDetails) {
+			return TPromise.wrap(void 0);
+		}
+
+		const { group, editorsToClose, filter } = closeEditorsDetails;
+
+		// Check for dirty and veto
+		return this.handleDirty(editorsToClose, true /* ignore if opened in other group */).then(veto => {
+			if (veto) {
+				return void 0;
+			}
+
+			// Close with filter
+			if (filter) {
+				this.doCloseEditorsWithFilter(group, filter);
+			}
+
+			// Close without filter
+			else {
+				this.doCloseEditors(group, editorsToClose.map(e => e.editor));
+			}
+
+			return void 0;
+		});
+	}
+
+	private extractCloseEditorDetails(position: Position, filterOrEditors?: ICloseEditorsFilter | EditorInput[]): { group: EditorGroup, editorsToClose: EditorIdentifier[], filter?: ICloseEditorsFilter } {
 		const group = this.stacks.groupAt(position);
 		if (!group) {
-			return TPromise.as<void>(null);
+			return void 0;
 		}
 
-		// Check for dirty and veto
 		let editorsToClose: EditorInput[];
-		if (!direction) {
-			editorsToClose = group.getEditors().filter(e => !except || !e.matches(except));
-		} else {
-			editorsToClose = (direction === Direction.LEFT) ? group.getEditors().slice(0, group.indexOf(except)) : group.getEditors().slice(group.indexOf(except) + 1);
+		let filter: ICloseEditorsFilter;
+
+		// Close: Specific Editors
+		if (Array.isArray(filterOrEditors)) {
+			editorsToClose = filterOrEditors;
 		}
 
-		return this.handleDirty(editorsToClose.map(editor => { return { group, editor }; })).then(veto => {
-			if (veto) {
-				return;
+		// Close: By Filter or all
+		else {
+			editorsToClose = group.getEditors(true /* in MRU order */);
+			filter = filterOrEditors || Object.create(null);
+
+			// Filter: saved only
+			if (filter.savedOnly) {
+				editorsToClose = editorsToClose.filter(e => !e.isDirty());
 			}
 
-			this.doCloseEditors(group, except, direction);
-		});
+			// Filter: direction (left / right)
+			else if (!types.isUndefinedOrNull(filter.direction)) {
+				editorsToClose = (filter.direction === Direction.LEFT) ? editorsToClose.slice(0, group.indexOf(filter.except)) : editorsToClose.slice(group.indexOf(filter.except) + 1);
+			}
+
+			// Filter: except
+			else if (filter.except) {
+				editorsToClose = editorsToClose.filter(e => !e.matches(filter.except));
+			}
+		}
+
+		return { group, editorsToClose: editorsToClose.map(editor => ({ editor, group })), filter };
 	}
 
-	private doCloseEditors(group: EditorGroup, except?: EditorInput, direction?: Direction): void {
+	private doCloseEditors(group: EditorGroup, editors: EditorInput[]): void {
 
 		// Close all editors in group
-		if (!except) {
+		if (editors.length === group.count) {
+			this.doCloseAllEditorsInGroup(group);
+		}
 
-			// Update stacks model: remove all non active editors first to prevent opening the next editor in group
-			group.closeEditors(group.activeEditor);
+		// Close specific editors in group
+		else {
 
-			// Now close active editor in group which will close the group
-			this.doCloseActiveEditor(group);
+			// Editors to close are not active, so we can just close them
+			if (!editors.some(editor => group.activeEditor.matches(editor))) {
+				editors.forEach(editor => this.doCloseInactiveEditor(group, editor));
+			}
+
+			// Active editor is also a candidate to close, thus we make the first
+			// non-candidate editor active and then close the other ones
+			else {
+				const firstEditorToKeep = group.getEditors(true).filter(editorInGroup => !editors.some(editor => editor.matches(editorInGroup)))[0];
+
+				this.openEditor(firstEditorToKeep, null, this.stacks.positionOfGroup(group)).done(() => {
+					editors.forEach(editor => this.doCloseInactiveEditor(group, editor));
+				}, errors.onUnexpectedError);
+			}
+		}
+	}
+
+	private doCloseEditorsWithFilter(group: EditorGroup, filter: { except?: EditorInput, direction?: Direction, savedOnly?: boolean }): void {
+
+		// Close all editors if there is no editor to except and
+		// we either are not only closing saved editors or
+		// there are no dirty editors.
+		let closeAllEditors = false;
+		if (!filter.except) {
+			if (!filter.savedOnly) {
+				closeAllEditors = true;
+			} else {
+				closeAllEditors = !group.getEditors().some(e => e.isDirty());
+			}
+		}
+
+		// Close all editors in group
+		if (closeAllEditors) {
+			this.doCloseAllEditorsInGroup(group);
+		}
+
+		// Close saved editors in group
+		else if (filter.savedOnly) {
+
+			// We can just close all saved editors around the currently active dirty one
+			if (group.activeEditor.isDirty()) {
+				group.getEditors().filter(editor => !editor.isDirty() && !editor.matches(filter.except)).forEach(editor => this.doCloseInactiveEditor(group, editor));
+			}
+
+			// Active editor is also a candidate to close, thus we make the first dirty editor
+			// active and then close the other ones
+			else {
+				const firstDirtyEditor = group.getEditors(true).filter(editor => editor.isDirty())[0];
+
+				this.openEditor(firstDirtyEditor, null, this.stacks.positionOfGroup(group)).done(() => {
+					this.doCloseEditorsWithFilter(group, filter);
+				}, errors.onUnexpectedError);
+			}
 		}
 
 		// Close all editors in group except active one
-		else if (except.matches(group.activeEditor)) {
+		else if (filter.except && filter.except.matches(group.activeEditor)) {
 
 			// Update stacks model: close non active editors supporting the direction
-			group.closeEditors(group.activeEditor, direction);
+			group.closeEditors(group.activeEditor, filter.direction);
 		}
 
 		// Finally: we are asked to close editors around a non-active editor
 		// Thus we make the non-active one active and then close the others
 		else {
-			this.openEditor(except, null, this.stacks.positionOfGroup(group)).done(() => {
-				this.doCloseEditors(group, except, direction);
+			this.openEditor(filter.except, null, this.stacks.positionOfGroup(group)).done(() => {
+
+				// since the opening might have failed, we have to check again for the active editor
+				// being the expected one, otherwise we end up in an endless loop trying to open the
+				// editor
+				if (filter.except.matches(group.activeEditor)) {
+					this.doCloseEditorsWithFilter(group, filter);
+				}
 			}, errors.onUnexpectedError);
 		}
 	}
 
-	private handleDirty(identifiers: EditorIdentifier[]): TPromise<boolean /* veto */> {
+	private handleDirty(identifiers: EditorIdentifier[], ignoreIfOpenedInOtherGroup?: boolean): TPromise<boolean /* veto */> {
 		if (!identifiers.length) {
 			return TPromise.as(false); // no veto
 		}
 
-		return this.doHandleDirty(identifiers.shift()).then(veto => {
+		return this.doHandleDirty(identifiers.shift(), ignoreIfOpenedInOtherGroup).then(veto => {
 			if (veto) {
 				return veto;
 			}
 
-			return this.handleDirty(identifiers);
+			return this.handleDirty(identifiers, ignoreIfOpenedInOtherGroup);
 		});
 	}
 
-	private doHandleDirty(identifier: EditorIdentifier): TPromise<boolean /* veto */> {
-		if (!identifier || !identifier.editor || !identifier.editor.isDirty()) {
+	private doHandleDirty(identifier: EditorIdentifier, ignoreIfOpenedInOtherGroup?: boolean): TPromise<boolean /* veto */> {
+		if (!identifier || !identifier.editor || !identifier.editor.isDirty() || (ignoreIfOpenedInOtherGroup && this.countEditors(identifier.editor) > 1 /* allow to close a dirty editor if it is opened in another group */)) {
 			return TPromise.as(false); // no veto
 		}
 
-		const {editor} = identifier;
+		const { editor } = identifier;
 
-		const res = editor.confirmSave();
-		switch (res) {
-			case ConfirmResult.SAVE:
-				return editor.save().then(ok => !ok);
+		// Switch to editor that we want to handle
+		return this.openEditor(identifier.editor, null, this.stacks.positionOfGroup(identifier.group)).then(() => {
+			return editor.confirmSave().then(res => {
 
-			case ConfirmResult.DONT_SAVE:
-				return editor.revert().then(ok => !ok);
+				// It could be that the editor saved meanwhile, so we check again
+				// to see if anything needs to happen before closing for good.
+				// This can happen for example if autoSave: onFocusChange is configured
+				// so that the save happens when the dialog opens.
+				if (!editor.isDirty()) {
+					return res === ConfirmResult.CANCEL ? true : false;
+				}
 
-			case ConfirmResult.CANCEL:
-				return TPromise.as(true); // veto
+				// Otherwise, handle accordingly
+				switch (res) {
+					case ConfirmResult.SAVE:
+						return editor.save().then(ok => !ok);
+
+					case ConfirmResult.DONT_SAVE:
+						// first try a normal revert where the contents of the editor are restored
+						return editor.revert().then(ok => !ok, error => {
+							// if that fails, since we are about to close the editor, we accept that
+							// the editor cannot be reverted and instead do a soft revert that just
+							// enables us to close the editor. With this, a user can always close a
+							// dirty editor even when reverting fails.
+							return editor.revert({ soft: true }).then(ok => !ok);
+						});
+
+					case ConfirmResult.CANCEL:
+						return true; // veto
+				}
+			});
+		});
+	}
+
+	private countEditors(editor: EditorInput): number {
+		const editors = [editor];
+		if (editor instanceof SideBySideEditorInput) {
+			editors.push(editor.master);
 		}
+
+		return editors.reduce((prev, e) => prev += this.stacks.count(e), 0);
 	}
 
 	public getStacksModel(): EditorStacksModel {
@@ -674,11 +1009,11 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 	}
 
 	public getActiveEditor(): BaseEditor {
-		if (!this.sideBySideControl) {
+		if (!this.editorGroupsControl) {
 			return null; // too early
 		}
 
-		return this.sideBySideControl.getActiveEditor();
+		return this.editorGroupsControl.getActiveEditor();
 	}
 
 	public getVisibleEditors(): BaseEditor[] {
@@ -702,24 +1037,23 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 		this.modifyGroups(() => this.stacks.moveGroup(fromGroup, toPosition));
 
 		// Move widgets
-		this.sideBySideControl.move(fromPosition, toPosition);
+		this.editorGroupsControl.move(fromPosition, toPosition);
 
 		// Move data structures
 		arrays.move(this.visibleEditors, fromPosition, toPosition);
 		arrays.move(this.editorOpenToken, fromPosition, toPosition);
-		arrays.move(this.mapEditorInstantiationPromiseToEditor, fromPosition, toPosition);
 		arrays.move(this.instantiatedEditors, fromPosition, toPosition);
 
 		// Restore focus
 		this.focusGroup(fromGroup);
 
 		// Events
-		this._onEditorsMoved.fire();
+		this._onEditorGroupMoved.fire();
 	}
 
-	public moveEditor(input: EditorInput, from: EditorGroup, to: EditorGroup, index?: number): void;
-	public moveEditor(input: EditorInput, from: Position, to: Position, index?: number): void;
-	public moveEditor(input: EditorInput, arg2: any, arg3: any, index?: number): void {
+	public moveEditor(input: EditorInput, from: EditorGroup, to: EditorGroup, moveOptions?: IMoveOptions): void;
+	public moveEditor(input: EditorInput, from: Position, to: Position, moveOptions?: IMoveOptions): void;
+	public moveEditor(input: EditorInput, arg2: any, arg3: any, moveOptions?: IMoveOptions): void {
 		const fromGroup = (typeof arg2 === 'number') ? this.stacks.groupAt(arg2) : arg2;
 		if (!fromGroup) {
 			return;
@@ -727,18 +1061,20 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 
 		// Move within group
 		if (arg2 === arg3) {
-			this.doMoveEditorInsideGroups(input, fromGroup, index);
+			this.doMoveEditorInsideGroups(input, fromGroup, moveOptions);
 		}
 
 		// Move across groups
 		else {
 			const toPosition = (typeof arg3 === 'number') ? arg3 : this.stacks.positionOfGroup(arg3);
 
-			this.doMoveEditorAcrossGroups(input, fromGroup, toPosition, index);
+			this.doMoveEditorAcrossGroups(input, fromGroup, toPosition, moveOptions);
 		}
 	}
 
-	private doMoveEditorInsideGroups(input: EditorInput, group: EditorGroup, toIndex: number): void {
+	private doMoveEditorInsideGroups(input: EditorInput, group: EditorGroup, moveOptions?: IMoveOptions): void {
+		let toIndex = moveOptions && moveOptions.index;
+
 		if (typeof toIndex !== 'number') {
 			return; // do nothing if we move into same group without index
 		}
@@ -753,15 +1089,25 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 		group.pin(input);
 	}
 
-	private doMoveEditorAcrossGroups(input: EditorInput, fromGroup: EditorGroup, to: Position, index?: number): void {
+	private doMoveEditorAcrossGroups(input: EditorInput, fromGroup: EditorGroup, to: Position, moveOptions?: IMoveOptions): void {
+		if (fromGroup.count === 1) {
+			const toGroup = this.stacks.groupAt(to);
+			if (!toGroup && this.stacks.positionOfGroup(fromGroup) < to) {
+				return; // do nothing if the group to move only has one editor and is the last group already
+			}
+		}
+
+		const index = moveOptions && moveOptions.index;
+		const inactive = moveOptions && moveOptions.inactive;
+		const preserveFocus = moveOptions && moveOptions.preserveFocus;
 
 		// When moving an editor, try to preserve as much view state as possible by checking
-		// for th editor to be a text editor and creating the options accordingly if so
-		let options = EditorOptions.create({ pinned: true, index });
+		// for the editor to be a text editor and creating the options accordingly if so
+		let options = EditorOptions.create({ pinned: true, index, inactive, preserveFocus });
 		const activeEditor = this.getActiveEditor();
-		if (activeEditor instanceof BaseTextEditor && activeEditor.position === this.stacks.positionOfGroup(fromGroup) && input.matches(activeEditor.input)) {
-			options = TextEditorOptions.create({ pinned: true, index });
-			(<TextEditorOptions>options).viewState(activeEditor.getControl().saveViewState());
+		const codeEditor = getCodeEditor(activeEditor);
+		if (codeEditor && activeEditor.position === this.stacks.positionOfGroup(fromGroup) && input.matches(activeEditor.input)) {
+			options = TextEditorOptions.fromEditor(codeEditor, { pinned: true, index, inactive, preserveFocus });
 		}
 
 		// A move to another group is an open first...
@@ -772,7 +1118,19 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 	}
 
 	public arrangeGroups(arrangement: GroupArrangement): void {
-		this.sideBySideControl.arrangeGroups(arrangement);
+		this.editorGroupsControl.arrangeGroups(arrangement);
+	}
+
+	public setGroupOrientation(orientation: GroupOrientation): void {
+		this.editorGroupsControl.setGroupOrientation(orientation);
+		this._onGroupOrientationChanged.fire();
+
+		// Rename groups when layout changes
+		this.renameGroups();
+	}
+
+	public getGroupOrientation(): GroupOrientation {
+		return this.editorGroupsControl.getGroupOrientation();
 	}
 
 	public createContentArea(parent: Builder): Builder {
@@ -782,33 +1140,53 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 			.div()
 			.addClass('content');
 
-		// Side by Side Control
-		this.sideBySideControl = this.instantiationService.createInstance(SideBySideEditorControl, contentArea);
-
-		this.toUnbind.push(this.sideBySideControl.onGroupFocusChanged(() => this.onGroupFocusChanged()));
-
 		// get settings
 		this.memento = this.getMemento(this.storageService, MementoScope.WORKSPACE);
 
+		// Side by Side Control
+		const editorPartState: IEditorPartUIState = this.memento[EditorPart.EDITOR_PART_UI_STATE_STORAGE_KEY];
+		this.editorGroupsControl = this.instantiationService.createInstance(EditorGroupsControl, contentArea, editorPartState && editorPartState.groupOrientation);
+		this.toUnbind.push(this.editorGroupsControl.onGroupFocusChanged(() => this.onGroupFocusChanged()));
+
 		return contentArea;
+	}
+
+	protected updateStyles(): void {
+		super.updateStyles();
+
+		// Part container
+		const container = this.getContainer();
+		container.style('background-color', this.getColor(editorBackground));
+
+		// Content area
+		const content = this.getContentArea();
+
+		const groupCount = this.stacks.groups.length;
+		if (groupCount > 1) {
+			content.addClass('multiple-groups');
+		} else {
+			content.removeClass('multiple-groups');
+		}
+
+		content.style('background-color', groupCount > 0 ? this.getColor(EDITOR_GROUP_BACKGROUND) : null);
 	}
 
 	private onGroupFocusChanged(): void {
 
 		// Update stacks model
-		const activePosition = this.sideBySideControl.getActivePosition();
+		const activePosition = this.editorGroupsControl.getActivePosition();
 		if (typeof activePosition === 'number') {
 			this.stacks.setActive(this.stacks.groupAt(activePosition));
 		}
 
 		// Emit as change event so that clients get aware of new active editor
-		const activeEditor = this.sideBySideControl.getActiveEditor();
+		const activeEditor = this.editorGroupsControl.getActiveEditor();
 		if (activeEditor) {
 			this._onEditorsChanged.fire();
 		}
 	}
 
-	public replaceEditors(editors: { toReplace: EditorInput, replaceWith: EditorInput, options?: EditorOptions }[]): TPromise<BaseEditor[]> {
+	public replaceEditors(editors: { toReplace: EditorInput, replaceWith: EditorInput, options?: EditorOptions }[], position?: Position): TPromise<IEditor[]> {
 		const activeReplacements: IEditorReplacement[] = [];
 		const hiddenReplacements: IEditorReplacement[] = [];
 
@@ -820,19 +1198,21 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 
 			// For each group
 			this.stacks.groups.forEach(group => {
-				const index = group.indexOf(editor.toReplace);
-				if (index >= 0) {
-					if (editor.options) {
-						editor.options.index = index; // make sure we respect the index of the editor to replace!
-					} else {
-						editor.options = EditorOptions.create({ index });
-					}
+				if (position === void 0 || this.stacks.positionOfGroup(group) === position) {
+					const index = group.indexOf(editor.toReplace);
+					if (index >= 0) {
+						if (editor.options) {
+							editor.options.index = index; // make sure we respect the index of the editor to replace!
+						} else {
+							editor.options = EditorOptions.create({ index });
+						}
 
-					const replacement = { group, editor: editor.toReplace, replaceWith: editor.replaceWith, options: editor.options };
-					if (group.activeEditor.matches(editor.toReplace)) {
-						activeReplacements.push(replacement);
-					} else {
-						hiddenReplacements.push(replacement);
+						const replacement = { group, editor: editor.toReplace, replaceWith: editor.replaceWith, options: editor.options };
+						if (group.activeEditor.matches(editor.toReplace)) {
+							activeReplacements.push(replacement);
+						} else {
+							hiddenReplacements.push(replacement);
+						}
 					}
 				}
 			});
@@ -865,9 +1245,11 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 		return res;
 	}
 
-	public openEditors(editors: { input: EditorInput, position: Position, options?: EditorOptions }[]): TPromise<BaseEditor[]> {
+	public openEditors(editors: { input: EditorInput, position?: Position, options?: EditorOptions }[]): TPromise<IEditor[]>;
+	public openEditors(editors: { input: EditorInput, options?: EditorOptions }[], sideBySide?: boolean): TPromise<IEditor[]>;
+	public openEditors(editors: { input: EditorInput, position?: Position, options?: EditorOptions }[], sideBySide?: boolean): TPromise<IEditor[]> {
 		if (!editors.length) {
-			return TPromise.as<BaseEditor[]>([]);
+			return TPromise.as<IEditor[]>([]);
 		}
 
 		let activePosition: Position;
@@ -875,12 +1257,16 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 			activePosition = this.stacks.positionOfGroup(this.stacks.activeGroup);
 		}
 
-		const widthRatios = this.sideBySideControl.getWidthRatios();
+		const ratio = this.editorGroupsControl.getRatio();
 
-		return this.doOpenEditors(editors, activePosition, widthRatios);
+		return this.doOpenEditors(editors, activePosition, ratio, sideBySide);
 	}
 
-	public restoreEditors(): TPromise<BaseEditor[]> {
+	public hasEditorsToRestore(): boolean {
+		return this.stacks.groups.some(g => g.count > 0);
+	}
+
+	public restoreEditors(): TPromise<IEditor[]> {
 		const editors = this.stacks.groups.map((group, index) => {
 			return {
 				input: group.activeEditor,
@@ -890,7 +1276,7 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 		});
 
 		if (!editors.length) {
-			return TPromise.as<BaseEditor[]>([]);
+			return TPromise.as<IEditor[]>([]);
 		}
 
 		let activePosition: Position;
@@ -900,50 +1286,67 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 
 		const editorState: IEditorPartUIState = this.memento[EditorPart.EDITOR_PART_UI_STATE_STORAGE_KEY];
 
-		return this.doOpenEditors(editors, activePosition, editorState && editorState.widthRatio);
+		// Open editors (throttle editor change events)
+		return this._onEditorsChanged.throttle(this.doOpenEditors(editors, activePosition, editorState && editorState.ratio));
 	}
 
-	private doOpenEditors(editors: { input: EditorInput, position: Position, options?: EditorOptions }[], activePosition?: number, widthRatios?: number[]): TPromise<BaseEditor[]> {
-		const leftEditors = editors.filter(e => e.position === Position.LEFT);
-		const centerEditors = editors.filter(e => e.position === Position.CENTER);
-		const rightEditors = editors.filter(e => e.position === Position.RIGHT);
+	private doOpenEditors(editors: { input: EditorInput, position?: Position, options?: EditorOptions }[], activePosition?: number, ratio?: number[], sideBySide?: boolean): TPromise<IEditor[]> {
 
-		const leftGroup = this.stacks.groupAt(Position.LEFT);
-		const centerGroup = this.stacks.groupAt(Position.CENTER);
-		const rightGroup = this.stacks.groupAt(Position.RIGHT);
+		// Find position if not provided already from calling side
+		editors.forEach(editor => {
+			if (typeof editor.position !== 'number') {
+				editor.position = this.findPosition(editor.input, editor.options, sideBySide);
+			}
+		});
+
+		const positionOneEditors = editors.filter(e => e.position === Position.ONE);
+		const positionTwoEditors = editors.filter(e => e.position === Position.TWO);
+		const positionThreeEditors = editors.filter(e => e.position === Position.THREE);
+
+		const groupOne = this.stacks.groupAt(Position.ONE);
+		const groupTwo = this.stacks.groupAt(Position.TWO);
+		const groupThree = this.stacks.groupAt(Position.THREE);
 
 		// Compute the imaginary count if we const all editors open as the way requested
-		const leftCount = leftEditors.length + (leftGroup ? leftGroup.count : 0);
-		const centerCount = centerEditors.length + (centerGroup ? centerGroup.count : 0);
-		const rightCount = rightEditors.length + (rightGroup ? rightGroup.count : 0);
+		const oneCount = positionOneEditors.length + (groupOne ? groupOne.count : 0);
+		const twoCount = positionTwoEditors.length + (groupTwo ? groupTwo.count : 0);
+		const threeCount = positionThreeEditors.length + (groupThree ? groupThree.count : 0);
 
 		// Validate we do not produce empty groups given our imaginary count model
-		if ((!leftCount && (centerCount || rightCount) || (!centerCount && rightCount))) {
-			leftEditors.push(...centerEditors);
-			leftEditors.push(...rightEditors);
-			centerEditors.splice(0, centerEditors.length);
-			rightEditors.splice(0, rightEditors.length);
+		if ((!oneCount && (twoCount || threeCount) || (!twoCount && threeCount))) {
+			positionOneEditors.push(...positionTwoEditors);
+			positionOneEditors.push(...positionThreeEditors);
+			positionTwoEditors.splice(0, positionTwoEditors.length);
+			positionThreeEditors.splice(0, positionThreeEditors.length);
 		}
 
 		// Validate active input
 		if (typeof activePosition !== 'number') {
-			activePosition = Position.LEFT;
+			activePosition = Position.ONE;
 		}
 
-		// Validate width ratios
-		const positions = rightEditors.length ? 3 : centerEditors.length ? 2 : 1;
-		if (!widthRatios || widthRatios.length !== positions) {
+		// Validate ratios
+		const positions = positionThreeEditors.length ? 3 : positionTwoEditors.length ? 2 : 1;
+		if (!ratio || ratio.length !== positions) {
 			if (!this.getVisibleEditors().length) {
-				widthRatios = (positions === 3) ? [0.33, 0.33, 0.34] : (positions === 2) ? [0.5, 0.5] : [1];
+				ratio = (positions === 3) ? [0.33, 0.33, 0.34] : (positions === 2) ? [0.5, 0.5] : [1];
 			} else {
-				widthRatios = void 0;
+				ratio = void 0;
 			}
+		}
+
+		let focusGroup = false;
+		const activeGroup = this.stacks.groupAt(activePosition);
+		if (!this.stacks.activeGroup || !activeGroup) {
+			focusGroup = true; // always focus group if this is the first group or we are about to open a new group
+		} else {
+			focusGroup = editors.some(e => !e.options || (!e.options.inactive && !e.options.preserveFocus)); // only focus if the editors to open are not opening as inactive or preserveFocus
 		}
 
 		// Open each input respecting the options. Since there can only be one active editor in each
 		// position, we have to pick the first input from each position and add the others as inactive
-		const promises: TPromise<BaseEditor>[] = [];
-		[leftEditors.shift(), centerEditors.shift(), rightEditors.shift()].forEach((editor, position) => {
+		const promises: TPromise<IEditor>[] = [];
+		[positionOneEditors.shift(), positionTwoEditors.shift(), positionThreeEditors.shift()].forEach((editor, position) => {
 			if (!editor) {
 				return; // unused position
 			}
@@ -951,7 +1354,7 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 			const input = editor.input;
 
 			// Resolve editor options
-			const preserveFocus = (activePosition !== position);
+			const preserveFocus = (activePosition !== position && ratio && ratio.length > 0); // during restore, preserve focus to reduce flicker
 			let options: EditorOptions;
 			if (editor.options) {
 				options = editor.options;
@@ -962,24 +1365,31 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 				options = EditorOptions.create({ preserveFocus });
 			}
 
-			promises.push(this.openEditor(input, options, position, widthRatios));
+			promises.push(this.openEditor(input, options, position, ratio));
 		});
 
 		return TPromise.join(promises).then(editors => {
 
-			// Ensure active position
-			this.focusGroup(activePosition);
+			// Adjust focus as needed
+			if (focusGroup) {
+				this.focusGroup(activePosition);
+			}
 
 			// Update stacks model for remaining inactive editors
-			[leftEditors, centerEditors, rightEditors].forEach((editors, index) => {
+			[positionOneEditors, positionTwoEditors, positionThreeEditors].forEach((editors, index) => {
 				const group = this.stacks.groupAt(index);
 				if (group) {
-					editors.forEach(editor => group.openEditor(editor.input, { pinned: true })); // group could be null if one openeditor call failed!
+
+					// Make sure we are keeping the order as the editors are passed to us. We have to set
+					// an explicit index because otherwise we would put editors in the wrong order
+					// (see https://github.com/Microsoft/vscode/issues/30364)
+					const startingIndex = group.indexOf(group.activeEditor) + 1;
+					editors.forEach((editor, offset) => group.openEditor(editor.input, { pinned: true, index: (startingIndex + offset) }));
 				}
 			});
 
 			// Full layout side by side
-			this.sideBySideControl.layout(this.dimension);
+			this.editorGroupsControl.layout(this.dimension);
 
 			return editors;
 		});
@@ -997,7 +1407,7 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 			// Update UI
 			const editor = this.visibleEditors[this.stacks.positionOfGroup(group)];
 			if (editor) {
-				this.sideBySideControl.setActive(editor);
+				this.editorGroupsControl.setActive(editor);
 			}
 		}
 	}
@@ -1033,41 +1443,18 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 		}
 	}
 
-	public unpinEditor(group: EditorGroup, input: EditorInput): void;
-	public unpinEditor(position: Position, input: EditorInput): void;
-	public unpinEditor(arg1: any, input: EditorInput): void {
-		if (input.isDirty()) {
-			return; // we do not allow to unpin dirty editors
-		}
-
-		const group = (typeof arg1 === 'number') ? this.stacks.groupAt(arg1) : arg1;
-		if (group) {
-			if (group.isPreview(input)) {
-				return;
+	public invokeWithinEditorContext<T>(fn: (accessor: ServicesAccessor) => T): T {
+		const activeEditor = this.getActiveEditor();
+		if (activeEditor) {
+			const activeEditorControl = activeEditor.getControl();
+			if (isCodeEditor(activeEditorControl)) {
+				return activeEditorControl.invokeWithinContext(fn);
 			}
 
-			// Unpinning an editor closes the preview editor if we have any
-			let handlePreviewEditor: TPromise<boolean> = TPromise.as(false);
-			if (group.previewEditor) {
-				handlePreviewEditor = this.handleDirty([{ group, editor: group.previewEditor }]);
-			}
-
-			handlePreviewEditor.done(veto => {
-				if (veto) {
-					return;
-				}
-
-				// The active editor is the preview editor and we are asked to make
-				// another editor the preview editor. So we need to take care of closing
-				// the active editor first
-				if (group.isPreview(group.activeEditor) && !group.activeEditor.matches(input)) {
-					this.doCloseActiveEditor(group);
-				}
-
-				// Update stacks model
-				group.unpin(input);
-			});
+			return this.editorGroupsControl.getInstantiationService(activeEditor.position).invokeFunction(fn);
 		}
+
+		return this.instantiationService.invokeFunction(fn);
 	}
 
 	public layout(dimension: Dimension): Dimension[] {
@@ -1077,7 +1464,9 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 
 		// Pass to Side by Side Control
 		this.dimension = sizes[1];
-		this.sideBySideControl.layout(this.dimension);
+		this.editorGroupsControl.layout(this.dimension);
+
+		this.onLayoutEmitter.fire(dimension);
 
 		return sizes;
 	}
@@ -1085,8 +1474,12 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 	public shutdown(): void {
 
 		// Persist UI State
-		const editorState: IEditorPartUIState = { widthRatio: this.sideBySideControl.getWidthRatios() };
-		this.memento[EditorPart.EDITOR_PART_UI_STATE_STORAGE_KEY] = editorState;
+		const editorState: IEditorPartUIState = { ratio: this.editorGroupsControl.getRatio(), groupOrientation: this.editorGroupsControl.getGroupOrientation() };
+		if (editorState.ratio.length || editorState.groupOrientation !== 'vertical') {
+			this.memento[EditorPart.EDITOR_PART_UI_STATE_STORAGE_KEY] = editorState;
+		} else {
+			delete this.memento[EditorPart.EDITOR_PART_UI_STATE_STORAGE_KEY];
+		}
 
 		// Unload all Instantiated Editors
 		for (let i = 0; i < this.instantiatedEditors.length; i++) {
@@ -1104,7 +1497,7 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 		// Emitters
 		this._onEditorsChanged.dispose();
 		this._onEditorOpening.dispose();
-		this._onEditorsMoved.dispose();
+		this._onEditorGroupMoved.dispose();
 		this._onEditorOpenFail.dispose();
 
 		// Reset Tokens
@@ -1114,7 +1507,7 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 		}
 
 		// Widgets
-		this.sideBySideControl.dispose();
+		this.editorGroupsControl.dispose();
 
 		// Pass to active editors
 		this.visibleEditors.forEach(editor => {
@@ -1140,12 +1533,12 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 		super.dispose();
 	}
 
-	private findPosition(input: EditorInput, options?: EditorOptions, sideBySide?: boolean, widthRatios?: number[]): Position;
-	private findPosition(input: EditorInput, options?: EditorOptions, desiredPosition?: Position, widthRatios?: number[]): Position;
-	private findPosition(input: EditorInput, options?: EditorOptions, arg1?: any, widthRatios?: number[]): Position {
+	private findPosition(input: EditorInput, options?: EditorOptions, sideBySide?: boolean, ratio?: number[]): Position;
+	private findPosition(input: EditorInput, options?: EditorOptions, desiredPosition?: Position, ratio?: number[]): Position;
+	private findPosition(input: EditorInput, options?: EditorOptions, arg1?: any, ratio?: number[]): Position {
 
-		// With defined width ratios, always trust the provided position
-		if (widthRatios && types.isNumber(arg1)) {
+		// With defined ratios, always trust the provided position
+		if (ratio && types.isNumber(arg1)) {
 			return arg1;
 		}
 
@@ -1153,46 +1546,55 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 		const visibleEditors = this.getVisibleEditors();
 		const activeEditor = this.getActiveEditor();
 		if (visibleEditors.length === 0 || !activeEditor) {
-			return Position.LEFT; // can only be LEFT
+			return Position.ONE; // can only be ONE
 		}
 
+		// Ignore revealIfVisible/revealIfOpened option if we got instructed explicitly to
+		// * open at a specific index
+		// * open to the side
+		// * open in a specific group
+		const skipReveal = (options && options.index) || arg1 === true /* open to side */ || typeof arg1 === 'number' /* open specific group */;
+
 		// Respect option to reveal an editor if it is already visible
-		if (options && options.revealIfVisible) {
-			const editorsToCheck: BaseEditor[] = [];
-			if (activeEditor) { editorsToCheck.push(activeEditor); }
-			visibleEditors.forEach(e => { if (e !== activeEditor) { editorsToCheck.push(e); } });
-			for (let i = 0; i < editorsToCheck.length; i++) {
-				const editorToCheck = editorsToCheck[i];
-				if (input.matches(editorToCheck.input)) {
-					return editorToCheck.position;
-				}
+		if (!skipReveal && options && options.revealIfVisible) {
+			const group = this.stacks.findGroup(input, true);
+			if (group) {
+				return this.stacks.positionOfGroup(group);
 			}
 		}
 
-		// Position is unknown: pick last active or LEFT
-		if (types.isUndefinedOrNull(arg1) || arg1 === false) {
-			const lastActivePosition = this.sideBySideControl.getActivePosition();
+		// Respect option to reveal an editor if it is open (not necessarily visible)
+		if (!skipReveal && (this.revealIfOpen || (options && options.revealIfOpened))) {
+			const group = this.stacks.findGroup(input);
+			if (group) {
+				return this.stacks.positionOfGroup(group);
+			}
+		}
 
-			return lastActivePosition || Position.LEFT;
+		// Position is unknown: pick last active or ONE
+		if (types.isUndefinedOrNull(arg1) || arg1 === false) {
+			const lastActivePosition = this.editorGroupsControl.getActivePosition();
+
+			return lastActivePosition || Position.ONE;
 		}
 
 		// Position is sideBySide: Find position relative to active editor
 		if (arg1 === true) {
 			switch (activeEditor.position) {
-				case Position.LEFT:
-					return Position.CENTER;
-				case Position.CENTER:
-					return Position.RIGHT;
-				case Position.RIGHT:
-					return null; // Cannot open to the side of the right most editor
+				case Position.ONE:
+					return Position.TWO;
+				case Position.TWO:
+					return Position.THREE;
+				case Position.THREE:
+					return null; // Cannot open to the side of the right/bottom most editor
 			}
 
 			return null; // Prevent opening to the side
 		}
 
 		// Position is provided, validate it
-		if (arg1 === Position.RIGHT && visibleEditors.length === 1) {
-			return Position.CENTER;
+		if (arg1 === Position.THREE && visibleEditors.length === 1) {
+			return Position.TWO;
 		}
 
 		return arg1;
@@ -1210,7 +1612,7 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 				const visibleEditors: EditorIdentifier[] = [];
 				const hiddenEditors: EditorIdentifier[] = [];
 				this.pendingEditorInputsToClose.forEach(identifier => {
-					const {group, editor} = identifier;
+					const { group, editor } = identifier;
 
 					if (group.isActive(editor)) {
 						visibleEditors.push(identifier);
@@ -1224,7 +1626,7 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 
 				// Close visible ones second
 				visibleEditors
-					.sort((a1, a2) => this.stacks.positionOfGroup(a2.group) - this.stacks.positionOfGroup(a1.group))	// reduce layout work by starting right first
+					.sort((a1, a2) => this.stacks.positionOfGroup(a2.group) - this.stacks.positionOfGroup(a1.group))	// reduce layout work by starting right/bottom first
 					.forEach(visible => this.doCloseEditor(<EditorGroup>visible.group, visible.editor, false));
 
 				// Reset
@@ -1240,15 +1642,15 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 		if (types.isUndefinedOrNull(arg2)) {
 			const rochade = <Rochade>arg1;
 			switch (rochade) {
-				case Rochade.CENTER_TO_LEFT:
-					this.rochade(Position.CENTER, Position.LEFT);
+				case Rochade.TWO_TO_ONE:
+					this.rochade(Position.TWO, Position.ONE);
 					break;
-				case Rochade.RIGHT_TO_CENTER:
-					this.rochade(Position.RIGHT, Position.CENTER);
+				case Rochade.THREE_TO_TWO:
+					this.rochade(Position.THREE, Position.TWO);
 					break;
-				case Rochade.CENTER_AND_RIGHT_TO_LEFT:
-					this.rochade(Position.CENTER, Position.LEFT);
-					this.rochade(Position.RIGHT, Position.CENTER);
+				case Rochade.TWO_AND_THREE_TO_ONE:
+					this.rochade(Position.TWO, Position.ONE);
+					this.rochade(Position.THREE, Position.TWO);
 			}
 		} else {
 			const from = <Position>arg1;
@@ -1256,7 +1658,6 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 
 			this.doRochade(this.visibleEditors, from, to, null);
 			this.doRochade(this.editorOpenToken, from, to, null);
-			this.doRochade(this.mapEditorInstantiationPromiseToEditor, from, to, Object.create(null));
 			this.doRochade(this.instantiatedEditors, from, to, []);
 		}
 	}
@@ -1266,9 +1667,11 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 		array[from] = empty;
 	}
 
-	private ensureGroup(position: Position, activate = true): EditorGroup {
+	private ensureGroup(position: Position, activate = true): [EditorGroup, boolean /* new group opened */] {
+		let newGroupOpened = false;
 		let group = this.stacks.groupAt(position);
 		if (!group) {
+			newGroupOpened = true;
 
 			// Race condition: it could be that someone quickly opens editors one after
 			// the other and we are asked to open an editor in position 2 before position
@@ -1291,7 +1694,7 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 			this.stacks.setActive(group);
 		}
 
-		return group;
+		return [group, newGroupOpened];
 	}
 
 	private modifyGroups(modification: () => void) {
@@ -1306,23 +1709,24 @@ export class EditorPart extends Part implements IEditorPart, IEditorGroupService
 	private renameGroups(): void {
 		const groups = this.stacks.groups;
 		if (groups.length > 0) {
+			const layoutVertically = (this.editorGroupsControl.getGroupOrientation() !== 'horizontal');
 
-			// LEFT | CENTER | RIGHT
+			// ONE | TWO | THREE
 			if (groups.length > 2) {
-				this.stacks.renameGroup(this.stacks.groupAt(Position.LEFT), EditorPart.GROUP_LEFT_LABEL);
-				this.stacks.renameGroup(this.stacks.groupAt(Position.CENTER), EditorPart.GROUP_CENTER_LABEL);
-				this.stacks.renameGroup(this.stacks.groupAt(Position.RIGHT), EditorPart.GROUP_RIGHT_LABEL);
+				this.stacks.renameGroup(this.stacks.groupAt(Position.ONE), layoutVertically ? EditorPart.GROUP_LEFT : EditorPart.GROUP_TOP);
+				this.stacks.renameGroup(this.stacks.groupAt(Position.TWO), layoutVertically ? EditorPart.GROUP_CENTER : EditorPart.GROUP_MIDDLE);
+				this.stacks.renameGroup(this.stacks.groupAt(Position.THREE), layoutVertically ? EditorPart.GROUP_RIGHT : EditorPart.GROUP_BOTTOM);
 			}
 
-			// LEFT | RIGHT
+			// ONE | TWO
 			else if (groups.length > 1) {
-				this.stacks.renameGroup(this.stacks.groupAt(Position.LEFT), EditorPart.GROUP_LEFT_LABEL);
-				this.stacks.renameGroup(this.stacks.groupAt(Position.CENTER), EditorPart.GROUP_RIGHT_LABEL);
+				this.stacks.renameGroup(this.stacks.groupAt(Position.ONE), layoutVertically ? EditorPart.GROUP_LEFT : EditorPart.GROUP_TOP);
+				this.stacks.renameGroup(this.stacks.groupAt(Position.TWO), layoutVertically ? EditorPart.GROUP_RIGHT : EditorPart.GROUP_BOTTOM);
 			}
 
-			// LEFT
+			// ONE
 			else {
-				this.stacks.renameGroup(this.stacks.groupAt(Position.LEFT), EditorPart.GROUP_LEFT_LABEL);
+				this.stacks.renameGroup(this.stacks.groupAt(Position.ONE), layoutVertically ? EditorPart.GROUP_LEFT : EditorPart.GROUP_TOP);
 			}
 		}
 	}

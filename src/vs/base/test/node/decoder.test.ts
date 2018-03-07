@@ -11,11 +11,11 @@ import decoder = require('vs/base/node/decoder');
 suite('Decoder', () => {
 
 	test('decoding', function () {
-		var lineDecoder = new decoder.LineDecoder();
-		var res = lineDecoder.write(new Buffer('hello'));
+		const lineDecoder = new decoder.LineDecoder();
+		let res = lineDecoder.write(Buffer.from('hello'));
 		assert.equal(res.length, 0);
 
-		res = lineDecoder.write(new Buffer('\nworld'));
+		res = lineDecoder.write(Buffer.from('\nworld'));
 		assert.equal(res[0], 'hello');
 		assert.equal(res.length, 1);
 

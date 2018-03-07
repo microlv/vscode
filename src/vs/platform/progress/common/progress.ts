@@ -4,8 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import {TPromise} from 'vs/base/common/winjs.base';
-import {createDecorator} from 'vs/platform/instantiation/common/instantiation';
+import { TPromise } from 'vs/base/common/winjs.base';
+import { createDecorator } from 'vs/platform/instantiation/common/instantiation';
 
 export const IProgressService = createDecorator<IProgressService>('progressService');
 
@@ -29,4 +29,62 @@ export interface IProgressRunner {
 	total(value: number): void;
 	worked(value: number): void;
 	done(): void;
+}
+
+export const emptyProgressRunner: IProgressRunner = Object.freeze({
+	total() { },
+	worked() { },
+	done() { }
+});
+
+export interface IProgress<T> {
+	report(item: T): void;
+}
+
+export const emptyProgress: IProgress<any> = Object.freeze({ report() { } });
+
+export class Progress<T> implements IProgress<T> {
+
+	private _callback: (data: T) => void;
+	private _value: T;
+
+	constructor(callback: (data: T) => void) {
+		this._callback = callback;
+	}
+
+	get value() {
+		return this._value;
+	}
+
+	report(item: T) {
+		this._value = item;
+		this._callback(this._value);
+	}
+}
+
+export enum ProgressLocation {
+	Explorer = 1,
+	Scm = 3,
+	Extensions = 5,
+	Window = 10
+}
+
+export interface IProgressOptions {
+	location: ProgressLocation;
+	title?: string;
+	tooltip?: string;
+}
+
+export interface IProgressStep {
+	message?: string;
+	percentage?: number;
+}
+
+export const IProgressService2 = createDecorator<IProgressService2>('progressService2');
+
+export interface IProgressService2 {
+
+	_serviceBrand: any;
+
+	withProgress<P extends Thenable<R>, R=any>(options: IProgressOptions, task: (progress: IProgress<IProgressStep>) => P): P;
 }

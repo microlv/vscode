@@ -4,76 +4,51 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import Event from 'vs/base/common/event';
-import cp = require('child_process');
-import platform = require('vs/base/common/platform');
-import processes = require('vs/base/node/processes');
-import {Builder} from 'vs/base/browser/builder';
-import {TPromise} from 'vs/base/common/winjs.base';
-import {createDecorator} from 'vs/platform/instantiation/common/instantiation';
+import * as os from 'os';
+import * as platform from 'vs/base/common/platform';
+import * as processes from 'vs/base/node/processes';
+import { readFile, fileExists } from 'vs/base/node/pfs';
 
-export const TERMINAL_PANEL_ID = 'workbench.panel.terminal';
-
-export const TERMINAL_SERVICE_ID = 'terminalService';
-
-export const TERMINAL_DEFAULT_SHELL_LINUX = !platform.isWindows ? (process.env.SHELL || 'sh') : 'sh';
-export const TERMINAL_DEFAULT_SHELL_OSX = !platform.isWindows ? (process.env.SHELL || 'sh') : 'sh';
-export const TERMINAL_DEFAULT_SHELL_WINDOWS = processes.getWindowsShell();
-
-/**
- * A context key that is set when the integrated terminal has focus.
- */
-export const KEYBINDING_CONTEXT_TERMINAL_FOCUS = 'terminalFocus';
-
-export const ITerminalService = createDecorator<ITerminalService>(TERMINAL_SERVICE_ID);
-
-export interface ITerminalConfiguration {
-	terminal: {
-		integrated: {
-			shell: {
-				linux: string,
-				osx: string,
-				windows: string
-			},
-			shellArgs: {
-				linux: string[],
-				osx: string[]
-			},
-			cursorBlinking: boolean,
-			fontFamily: string,
-			fontLigatures: boolean,
-			fontSize: number,
-			lineHeight: number,
-			setLocaleVariables: boolean
+let _TERMINAL_DEFAULT_SHELL_UNIX_LIKE: string = null;
+export function getTerminalDefaultShellUnixLike(): string {
+	if (!_TERMINAL_DEFAULT_SHELL_UNIX_LIKE) {
+		let unixLikeTerminal = 'sh';
+		if (!platform.isWindows && process.env.SHELL) {
+			unixLikeTerminal = process.env.SHELL;
+			// Some systems have $SHELL set to /bin/false which breaks the terminal
+			if (unixLikeTerminal === '/bin/false') {
+				unixLikeTerminal = '/bin/bash';
+			}
 		}
-	};
+		_TERMINAL_DEFAULT_SHELL_UNIX_LIKE = unixLikeTerminal;
+	}
+	return _TERMINAL_DEFAULT_SHELL_UNIX_LIKE;
 }
 
-export interface ITerminalProcess {
-	title: string;
-	process: cp.ChildProcess;
+let _TERMINAL_DEFAULT_SHELL_WINDOWS: string = null;
+export function getTerminalDefaultShellWindows(): string {
+	if (!_TERMINAL_DEFAULT_SHELL_WINDOWS) {
+		const isAtLeastWindows10 = platform.isWindows && parseFloat(os.release()) >= 10;
+		const is32ProcessOn64Windows = process.env.hasOwnProperty('PROCESSOR_ARCHITEW6432');
+		const powerShellPath = `${process.env.windir}\\${is32ProcessOn64Windows ? 'Sysnative' : 'System32'}\\WindowsPowerShell\\v1.0\\powershell.exe`;
+		_TERMINAL_DEFAULT_SHELL_WINDOWS = isAtLeastWindows10 ? powerShellPath : processes.getWindowsShell();
+	}
+	return _TERMINAL_DEFAULT_SHELL_WINDOWS;
 }
 
-export interface ITerminalService {
-	_serviceBrand: any;
-	onActiveInstanceChanged: Event<string>;
-	onInstancesChanged: Event<string>;
-	onInstanceTitleChanged: Event<string>;
-
-	close(): TPromise<any>;
-	copySelection(): TPromise<any>;
-	createNew(): TPromise<any>;
-	focus(): TPromise<any>;
-	focusNext(): TPromise<any>;
-	focusPrevious(): TPromise<any>;
-	hide(): TPromise<any>;
-	paste(): TPromise<any>;
-	runSelectedText(): TPromise<any>;
-	setActiveTerminal(index: number): TPromise<any>;
-	toggle(): TPromise<any>;
-
-	getActiveTerminalIndex(): number;
-	getTerminalInstanceTitles(): string[];
-	initConfigHelper(panelContainer: Builder): void;
-	killTerminalProcess(terminalProcess: ITerminalProcess): void;
+if (platform.isLinux) {
+	const file = '/etc/os-release';
+	fileExists(file).then(exists => {
+		if (!exists) {
+			return;
+		}
+		readFile(file).then(b => {
+			const contents = b.toString();
+			if (contents.indexOf('NAME=Fedora') >= 0) {
+				isFedora = true;
+			}
+		});
+	});
 }
+
+export let isFedora = false;

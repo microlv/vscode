@@ -20,5 +20,12 @@
 		["(", ")"],
 		["\"", "\""],
 		["'", "'"]
-	]
+	],
+	"folding": {
+		"offSide": true
+	},
+	"indentationRules": {
+		"increaseIndentPattern": "^\\s*.*(:|-) ?(&amp;\\w+)?(\\{[^}\"']*|\\([^)\"']*)?$",
+		"decreaseIndentPattern": "^\\s+\\}$"
+	}
 }

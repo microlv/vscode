@@ -5,27 +5,75 @@
 
 'use strict';
 
-import {localize} from 'vs/nls';
-import {IKeybindingService} from 'vs/platform/keybinding/common/keybinding';
-import {IMenu, MenuItemAction} from 'vs/platform/actions/common/actions';
-import {IMessageService} from 'vs/platform/message/common/message';
-import Severity from 'vs/base/common/severity';
-import {IAction} from 'vs/base/common/actions';
-import {IDisposable, dispose} from 'vs/base/common/lifecycle';
-import {ActionItem, Separator} from 'vs/base/browser/ui/actionbar/actionbar';
-import {domEvent} from 'vs/base/browser/event';
-import {Emitter} from 'vs/base/common/event';
+import { localize } from 'vs/nls';
+import { IKeybindingService } from 'vs/platform/keybinding/common/keybinding';
+import { IMenu, MenuItemAction, IMenuActionOptions, ICommandAction } from 'vs/platform/actions/common/actions';
+import { IAction } from 'vs/base/common/actions';
+import { IDisposable, dispose } from 'vs/base/common/lifecycle';
+import { ActionItem, Separator } from 'vs/base/browser/ui/actionbar/actionbar';
+import { domEvent } from 'vs/base/browser/event';
+import { Emitter } from 'vs/base/common/event';
+import { IContextMenuService } from 'vs/platform/contextview/browser/contextView';
+import { memoize } from 'vs/base/common/decorators';
+import { IdGenerator } from 'vs/base/common/idGenerator';
+import { createCSSRule } from 'vs/base/browser/dom';
+import URI from 'vs/base/common/uri';
+import { INotificationService } from 'vs/platform/notification/common/notification';
+import { isWindows } from 'vs/base/common/platform';
 
+// The alternative key on all platforms is alt. On windows we also support shift as an alternative key #44136
+class AlternativeKeyEmitter extends Emitter<boolean> {
 
-export function fillInActions(menu: IMenu, target: IAction[] | { primary: IAction[]; secondary: IAction[];}): void {
-	const groups = menu.getActions();
+	private _subscriptions: IDisposable[] = [];
+	private _isPressed: boolean;
+
+	private constructor(contextMenuService: IContextMenuService) {
+		super();
+
+		this._subscriptions.push(domEvent(document.body, 'keydown')(e => {
+			this.isPressed = e.altKey || (isWindows && e.shiftKey);
+		}));
+		this._subscriptions.push(domEvent(document.body, 'keyup')(e => this.isPressed = false));
+		this._subscriptions.push(domEvent(document.body, 'mouseleave')(e => this.isPressed = false));
+		this._subscriptions.push(domEvent(document.body, 'blur')(e => this.isPressed = false));
+		// Workaround since we do not get any events while a context menu is shown
+		this._subscriptions.push(contextMenuService.onDidContextMenu(() => this.isPressed = false));
+	}
+
+	get isPressed(): boolean {
+		return this._isPressed;
+	}
+
+	set isPressed(value: boolean) {
+		this._isPressed = value;
+		this.fire(this._isPressed);
+	}
+
+	@memoize
+	static getInstance(contextMenuService: IContextMenuService) {
+		return new AlternativeKeyEmitter(contextMenuService);
+	}
+
+	dispose() {
+		super.dispose();
+		this._subscriptions = dispose(this._subscriptions);
+	}
+}
+
+export function fillInActions(menu: IMenu, options: IMenuActionOptions, target: IAction[] | { primary: IAction[]; secondary: IAction[]; }, contextMenuService: IContextMenuService, isPrimaryGroup: (group: string) => boolean = group => group === 'navigation'): void {
+	const groups = menu.getActions(options);
 	if (groups.length === 0) {
 		return;
 	}
+	const getAlternativeActions = AlternativeKeyEmitter.getInstance(contextMenuService).isPressed;
 
 	for (let tuple of groups) {
 		let [group, actions] = tuple;
-		if (group === 'navigation') {
+		if (getAlternativeActions) {
+			actions = actions.map(a => !!a.alt ? a.alt : a);
+		}
+
+		if (isPrimaryGroup(group)) {
 
 			const head = Array.isArray<IAction>(target) ? target : target.primary;
 
@@ -53,122 +101,156 @@ export function fillInActions(menu: IMenu, target: IAction[] | { primary: IActio
 			head.splice(sep, 0, ...actions.slice(pivot));
 
 		} else {
-			if (Array.isArray<IAction>(target)) {
-				target.push(new Separator(), ...actions);
-			} else {
-				target.secondary.push(new Separator(), ...actions);
+			const to = Array.isArray<IAction>(target) ? target : target.secondary;
+
+			if (to.length > 0) {
+				to.push(new Separator());
 			}
+
+			to.push(...actions);
 		}
 	}
 }
 
 
-export function createActionItem(action: IAction, keybindingService: IKeybindingService, messageService: IMessageService): ActionItem {
+export function createActionItem(action: IAction, keybindingService: IKeybindingService, notificationService: INotificationService, contextMenuService: IContextMenuService): ActionItem {
 	if (action instanceof MenuItemAction) {
-		return new MenuItemActionItem(action, keybindingService, messageService);
+		return new MenuItemActionItem(action, keybindingService, notificationService, contextMenuService);
 	}
+	return undefined;
 }
 
+const ids = new IdGenerator('menu-item-action-item-icon-');
 
-const _altKey = new class extends Emitter<boolean> {
+export class MenuItemActionItem extends ActionItem {
 
-	private _subscriptions: IDisposable[] = [];
+	static readonly ICON_PATH_TO_CSS_RULES: Map<string /* path*/, string /* CSS rule */> = new Map<string, string>();
 
-	constructor() {
-		super();
-
-		this._subscriptions.push(domEvent(document.body, 'keydown')(e => this.fire(e.altKey)));
-		this._subscriptions.push(domEvent(document.body, 'keyup')(e => this.fire(false)));
-		this._subscriptions.push(domEvent(document.body, 'mouseleave')(e => this.fire(false)));
-	}
-
-	dispose() {
-		super.dispose();
-		this._subscriptions = dispose(this._subscriptions);
-	}
-};
-
-class MenuItemActionItem extends ActionItem {
-
-	private _altKeyDown: boolean = false;
+	private _wantsAltCommand: boolean = false;
+	private _itemClassDispose: IDisposable;
 
 	constructor(
-		action: MenuItemAction,
-		@IKeybindingService private _keybindingService: IKeybindingService,
-		@IMessageService private _messageService: IMessageService
+		public _action: MenuItemAction,
+		@IKeybindingService private readonly _keybindingService: IKeybindingService,
+		@INotificationService protected _notificationService: INotificationService,
+		@IContextMenuService private readonly _contextMenuService: IContextMenuService
 	) {
-		super(undefined, action, { icon: !!action.command.iconClass, label: !action.command.iconClass });
+		super(undefined, _action, { icon: !!(_action.class || _action.item.iconPath), label: !_action.class && !_action.item.iconPath });
 	}
 
-	private get _command() {
-		const {command, altCommand} = <MenuItemAction>this._action;
-		return this._altKeyDown && altCommand || command;
+	protected get _commandAction(): IAction {
+		return this._wantsAltCommand && (<MenuItemAction>this._action).alt || this._action;
 	}
 
 	onClick(event: MouseEvent): void {
 		event.preventDefault();
 		event.stopPropagation();
 
-		(<MenuItemAction>this._action).run(this._altKeyDown).done(undefined, err => {
-			this._messageService.show(Severity.Error, err);
-		});
+		this.actionRunner.run(this._commandAction)
+			.done(undefined, err => this._notificationService.error(err));
 	}
 
 	render(container: HTMLElement): void {
 		super.render(container);
 
-		let altSubscription: IDisposable;
-		let mouseOver: boolean;
-		this._callOnDispose.push(domEvent(container, 'mouseleave')(_ => {
-			mouseOver = false;
-			if (!this._altKeyDown) {
-				// stop listen on ALT
-				altSubscription.dispose();
-			}
-		}));
-		this._callOnDispose.push(domEvent(container, 'mouseenter')(e => {
-			mouseOver = true;
-			altSubscription = _altKey.event(value => {
+		this._updateItemClass(this._action.item);
 
-				this._altKeyDown = value;
+		let mouseOver = false;
+		let alternativeKeyDown = false;
+
+		const updateAltState = () => {
+			const wantsAltCommand = mouseOver && alternativeKeyDown;
+			if (wantsAltCommand !== this._wantsAltCommand) {
+				this._wantsAltCommand = wantsAltCommand;
 				this._updateLabel();
 				this._updateTooltip();
 				this._updateClass();
+			}
+		};
 
-				if (!mouseOver) {
-					// stop listening on ALT
-					altSubscription.dispose();
-				}
-			});
+		this._callOnDispose.push(AlternativeKeyEmitter.getInstance(this._contextMenuService).event(value => {
+			alternativeKeyDown = value;
+			updateAltState();
+		}));
+
+		this._callOnDispose.push(domEvent(container, 'mouseleave')(_ => {
+			mouseOver = false;
+			updateAltState();
+		}));
+
+		this._callOnDispose.push(domEvent(container, 'mouseenter')(e => {
+			mouseOver = true;
+			updateAltState();
 		}));
 	}
 
 	_updateLabel(): void {
 		if (this.options.label) {
-			this.$e.text(this._command.title);
+			this.$e.text(this._commandAction.label);
 		}
 	}
 
 	_updateTooltip(): void {
 		const element = this.$e.getHTMLElement();
-		const keybinding = this._keybindingService.lookupKeybindings(this._command.id)[0];
-		const keybindingLabel = keybinding && this._keybindingService.getLabelFor(keybinding);
+		const keybinding = this._keybindingService.lookupKeybinding(this._commandAction.id);
+		const keybindingLabel = keybinding && keybinding.getLabel();
 
 		element.title = keybindingLabel
-			? localize('titleAndKb', "{0} ({1})", this._command.title, keybindingLabel)
-			: this._command.title;
+			? localize('titleAndKb', "{0} ({1})", this._commandAction.label, keybindingLabel)
+			: this._commandAction.label;
 	}
 
 	_updateClass(): void {
 		if (this.options.icon) {
-			const element = this.$e.getHTMLElement();
-			const {command, altCommand} = (<MenuItemAction>this._action);
-			if (this._command !== command) {
-				element.classList.remove(command.iconClass);
-			} else if (altCommand) {
-				element.classList.remove(altCommand.iconClass);
+			if (this._commandAction !== this._action) {
+				this._updateItemClass(this._action.alt.item);
+			} else if ((<MenuItemAction>this._action).alt) {
+				this._updateItemClass(this._action.item);
 			}
-			element.classList.add('icon', this._command.iconClass);
 		}
+	}
+
+	_updateItemClass(item: ICommandAction): void {
+		dispose(this._itemClassDispose);
+		this._itemClassDispose = undefined;
+
+		if (item.iconPath) {
+			let iconClass: string;
+
+			if (MenuItemActionItem.ICON_PATH_TO_CSS_RULES.has(item.iconPath.dark)) {
+				iconClass = MenuItemActionItem.ICON_PATH_TO_CSS_RULES.get(item.iconPath.dark);
+			} else {
+				iconClass = ids.nextId();
+				createCSSRule(`.icon.${iconClass}`, `background-image: url("${URI.file(item.iconPath.light || item.iconPath.dark).toString()}")`);
+				createCSSRule(`.vs-dark .icon.${iconClass}, .hc-black .icon.${iconClass}`, `background-image: url("${URI.file(item.iconPath.dark).toString()}")`);
+				MenuItemActionItem.ICON_PATH_TO_CSS_RULES.set(item.iconPath.dark, iconClass);
+			}
+
+			this.$e.getHTMLElement().classList.add('icon', iconClass);
+			this._itemClassDispose = { dispose: () => this.$e.getHTMLElement().classList.remove('icon', iconClass) };
+		}
+	}
+
+	dispose(): void {
+		if (this._itemClassDispose) {
+			dispose(this._itemClassDispose);
+			this._itemClassDispose = undefined;
+		}
+
+		super.dispose();
+	}
+}
+
+// Need to subclass MenuItemActionItem in order to respect
+// the action context coming from any action bar, without breaking
+// existing users
+export class ContextAwareMenuItemActionItem extends MenuItemActionItem {
+
+	onClick(event: MouseEvent): void {
+		event.preventDefault();
+		event.stopPropagation();
+
+		this.actionRunner.run(this._commandAction, this._context)
+			.done(undefined, err => this._notificationService.error(err));
 	}
 }

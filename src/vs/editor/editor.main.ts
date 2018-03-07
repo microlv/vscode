@@ -5,30 +5,57 @@
 
 'use strict';
 
-import 'vs/editor/browser/editor.all';
-import 'vs/editor/contrib/quickOpen/browser/quickOutline.contribution';
-import 'vs/editor/contrib/quickOpen/browser/gotoLine.contribution';
-import 'vs/editor/contrib/quickOpen/browser/quickCommand.contribution';
-import 'vs/languages/languages.main';
-import 'vs/languages/php/common/php.contribution';
+import 'vs/editor/editor.all';
+import 'vs/editor/standalone/browser/accessibilityHelp/accessibilityHelp';
+import 'vs/editor/standalone/browser/inspectTokens/inspectTokens';
+import 'vs/editor/standalone/browser/iPadShowKeyboard/iPadShowKeyboard';
+import 'vs/editor/standalone/browser/quickOpen/quickOutline';
+import 'vs/editor/standalone/browser/quickOpen/gotoLine';
+import 'vs/editor/standalone/browser/quickOpen/quickCommand';
+import 'vs/editor/standalone/browser/toggleHighContrast/toggleHighContrast';
 
-import {createMonacoBaseAPI} from 'vs/editor/common/standalone/standaloneBase';
-import {createMonacoEditorAPI} from 'vs/editor/browser/standalone/standaloneEditor';
-import {createMonacoLanguagesAPI, registerStandaloneSchema} from 'vs/editor/browser/standalone/standaloneLanguages';
-import {DefaultConfig} from 'vs/editor/common/config/defaultConfig';
-import {IJSONSchema} from 'vs/base/common/jsonSchema';
+import { createMonacoBaseAPI } from 'vs/editor/common/standalone/standaloneBase';
+import { createMonacoEditorAPI } from 'vs/editor/standalone/browser/standaloneEditor';
+import { createMonacoLanguagesAPI } from 'vs/editor/standalone/browser/standaloneLanguages';
+import { EDITOR_DEFAULTS, WrappingIndent } from 'vs/editor/common/config/editorOptions';
+
+declare var exports: any;
+var global: any = self;
+global.monaco = exports;
+
+// When missing, polyfill the native promise
+// with our winjs-based polyfill
+import { PolyfillPromise } from 'vs/base/common/winjs.polyfill.promise';
+if (typeof global.Promise === 'undefined') {
+	global.Promise = PolyfillPromise;
+}
 
 // Set defaults for standalone editor
-DefaultConfig.editor.wrappingIndent = 'none';
-DefaultConfig.editor.folding = false;
+(<any>EDITOR_DEFAULTS).wrappingIndent = WrappingIndent.None;
+(<any>EDITOR_DEFAULTS.contribInfo).folding = false;
+(<any>EDITOR_DEFAULTS.viewInfo).glyphMargin = false;
+(<any>EDITOR_DEFAULTS).autoIndent = false;
 
-var global:any = self;
-global.monaco = createMonacoBaseAPI();
-global.monaco.editor = createMonacoEditorAPI();
-global.monaco.languages = createMonacoLanguagesAPI();
+let base = createMonacoBaseAPI();
+for (let prop in base) {
+	if (base.hasOwnProperty(prop)) {
+		exports[prop] = (base as any)[prop];
+	}
+}
+exports.editor = createMonacoEditorAPI();
+exports.languages = createMonacoLanguagesAPI();
 
-// Register all built-in standalone JSON schemas
-let MonacoEditorSchemas: { [url:string]: IJSONSchema } = global.MonacoEditorSchemas || {};
-for (var uri in MonacoEditorSchemas) {
-	registerStandaloneSchema(uri, MonacoEditorSchemas[uri]);
+if (typeof global.require !== 'undefined' && typeof global.require.config === 'function') {
+	global.require.config({
+		ignoreDuplicateModules: [
+			'vscode-languageserver-types',
+			'vscode-languageserver-types/main',
+			'vscode-nls',
+			'vscode-nls/vscode-nls',
+			'jsonc-parser',
+			'jsonc-parser/main',
+			'vscode-uri',
+			'vscode-uri/index'
+		]
+	});
 }

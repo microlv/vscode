@@ -4,11 +4,15 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import {TPromise} from 'vs/base/common/winjs.base';
-import { IEventEmitter, EventEmitter } from 'vs/base/common/eventEmitter';
-import {IDisposable} from 'vs/base/common/lifecycle';
-import * as Events from 'vs/base/common/events';
-import Event, {Emitter} from 'vs/base/common/event';
+import { TPromise } from 'vs/base/common/winjs.base';
+import { IDisposable } from 'vs/base/common/lifecycle';
+import Event, { Emitter } from 'vs/base/common/event';
+
+export interface ITelemetryData {
+	from?: string;
+	target?: string;
+	[key: string]: any;
+}
 
 export interface IAction extends IDisposable {
 	id: string;
@@ -17,14 +21,17 @@ export interface IAction extends IDisposable {
 	class: string;
 	enabled: boolean;
 	checked: boolean;
+	radio: boolean;
 	run(event?: any): TPromise<any>;
 }
 
-export interface IActionRunner extends IEventEmitter {
+export interface IActionRunner extends IDisposable {
 	run(action: IAction, context?: any): TPromise<any>;
+	onDidRun: Event<IRunEvent>;
+	onDidBeforeRun: Event<IRunEvent>;
 }
 
-export interface IActionItem extends IEventEmitter {
+export interface IActionItem {
 	actionRunner: IActionRunner;
 	setActionContext(context: any): void;
 	render(element: any /* HTMLElement */): void;
@@ -34,39 +41,13 @@ export interface IActionItem extends IEventEmitter {
 	dispose(): void;
 }
 
-/**
- * Checks if the provided object is compatible
- * with the IAction interface.
- * @param thing an object
- */
-export function isAction(thing: any): thing is IAction {
-	if (!thing) {
-		return false;
-	} else if (thing instanceof Action) {
-		return true;
-	} else if (typeof thing.id !== 'string') {
-		return false;
-	} else if (typeof thing.label !== 'string') {
-		return false;
-	} else if (typeof thing.class !== 'string') {
-		return false;
-	} else if (typeof thing.enabled !== 'boolean') {
-		return false;
-	} else if (typeof thing.checked !== 'boolean') {
-		return false;
-	} else if (typeof thing.run !== 'function') {
-		return false;
-	} else {
-		return true;
-	}
-}
-
 export interface IActionChangeEvent {
 	label?: string;
 	tooltip?: string;
 	class?: string;
 	enabled?: boolean;
 	checked?: boolean;
+	radio?: boolean;
 }
 
 export class Action implements IAction {
@@ -78,6 +59,7 @@ export class Action implements IAction {
 	protected _cssClass: string;
 	protected _enabled: boolean;
 	protected _checked: boolean;
+	protected _radio: boolean;
 	protected _order: number;
 	protected _actionCallback: (event?: any) => TPromise<any>;
 
@@ -169,10 +151,25 @@ export class Action implements IAction {
 		this._setChecked(value);
 	}
 
+	public get radio(): boolean {
+		return this._radio;
+	}
+
+	public set radio(value: boolean) {
+		this._setRadio(value);
+	}
+
 	protected _setChecked(value: boolean): void {
 		if (this._checked !== value) {
 			this._checked = value;
 			this._onDidChange.fire({ checked: value });
+		}
+	}
+
+	protected _setRadio(value: boolean): void {
+		if (this._radio !== value) {
+			this._radio = value;
+			this._onDidChange.fire({ radio: value });
 		}
 	}
 
@@ -184,7 +181,7 @@ export class Action implements IAction {
 		this._order = value;
 	}
 
-	public run(event?: any): TPromise<any> {
+	public run(event?: any, data?: ITelemetryData): TPromise<any> {
 		if (this._actionCallback !== void 0) {
 			return this._actionCallback(event);
 		}
@@ -198,19 +195,45 @@ export interface IRunEvent {
 	error?: any;
 }
 
-export class ActionRunner extends EventEmitter implements IActionRunner {
+export class ActionRunner implements IActionRunner {
+
+	private _onDidBeforeRun = new Emitter<IRunEvent>();
+	private _onDidRun = new Emitter<IRunEvent>();
+
+	public get onDidRun(): Event<IRunEvent> {
+		return this._onDidRun.event;
+	}
+
+	public get onDidBeforeRun(): Event<IRunEvent> {
+		return this._onDidBeforeRun.event;
+	}
 
 	public run(action: IAction, context?: any): TPromise<any> {
 		if (!action.enabled) {
 			return TPromise.as(null);
 		}
 
-		this.emit(Events.EventType.BEFORE_RUN, { action: action });
+		this._onDidBeforeRun.fire({ action: action });
 
-		return TPromise.as(action.run(context)).then((result: any) => {
-			this.emit(Events.EventType.RUN, <IRunEvent>{ action: action, result: result });
+		return this.runAction(action, context).then((result: any) => {
+			this._onDidRun.fire({ action: action, result: result });
 		}, (error: any) => {
-			this.emit(Events.EventType.RUN, <IRunEvent>{ action: action, error: error });
+			this._onDidRun.fire({ action: action, error: error });
 		});
+	}
+
+	protected runAction(action: IAction, context?: any): TPromise<any> {
+		const res = context ? action.run(context) : action.run();
+
+		if (TPromise.is(res)) {
+			return res;
+		}
+
+		return TPromise.wrap(res);
+	}
+
+	public dispose(): void {
+		this._onDidBeforeRun.dispose();
+		this._onDidRun.dispose();
 	}
 }

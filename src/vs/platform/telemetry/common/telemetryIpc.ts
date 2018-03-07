@@ -7,7 +7,7 @@
 
 import { TPromise } from 'vs/base/common/winjs.base';
 import { IChannel } from 'vs/base/parts/ipc/common/ipc';
-import { ITelemetryAppender } from './telemetry';
+import { ITelemetryAppender } from 'vs/platform/telemetry/common/telemetryUtils';
 
 export interface ITelemetryLog {
 	eventName: string;
@@ -34,7 +34,10 @@ export class TelemetryAppenderClient implements ITelemetryAppender {
 	constructor(private channel: ITelemetryAppenderChannel) { }
 
 	log(eventName: string, data?: any): any {
-		return this.channel.call('log', { eventName, data });
+		this.channel.call('log', { eventName, data })
+			.done(null, err => `Failed to log telemetry: ${console.warn(err)}`);
+
+		return TPromise.as(null);
 	}
 
 	dispose(): any {

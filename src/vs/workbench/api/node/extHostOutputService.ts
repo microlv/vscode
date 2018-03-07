@@ -4,8 +4,8 @@
  *--------------------------------------------------------------------------------------------*/
 'use strict';
 
-import {IThreadService} from 'vs/workbench/services/thread/common/threadService';
-import {MainContext, MainThreadOutputServiceShape} from './extHost.protocol';
+import { MainContext, MainThreadOutputServiceShape, IMainContext } from './extHost.protocol';
+import * as vscode from 'vscode';
 
 export class ExtHostOutputChannel implements vscode.OutputChannel {
 
@@ -28,25 +28,29 @@ export class ExtHostOutputChannel implements vscode.OutputChannel {
 
 	dispose(): void {
 		if (!this._disposed) {
-			this._proxy.$clear(this._id, this._name).then(() => {
+			this._proxy.$dispose(this._id, this._name).then(() => {
 				this._disposed = true;
 			});
 		}
 	}
 
 	append(value: string): void {
+		this.validate();
 		this._proxy.$append(this._id, this._name, value);
 	}
 
 	appendLine(value: string): void {
+		this.validate();
 		this.append(value + '\n');
 	}
 
 	clear(): void {
+		this.validate();
 		this._proxy.$clear(this._id, this._name);
 	}
 
 	show(columnOrPreserveFocus?: vscode.ViewColumn | boolean, preserveFocus?: boolean): void {
+		this.validate();
 		if (typeof columnOrPreserveFocus === 'boolean') {
 			preserveFocus = columnOrPreserveFocus;
 		}
@@ -55,7 +59,14 @@ export class ExtHostOutputChannel implements vscode.OutputChannel {
 	}
 
 	hide(): void {
+		this.validate();
 		this._proxy.$close(this._id);
+	}
+
+	private validate(): void {
+		if (this._disposed) {
+			throw new Error('Channel has been closed');
+		}
 	}
 }
 
@@ -63,8 +74,8 @@ export class ExtHostOutputService {
 
 	private _proxy: MainThreadOutputServiceShape;
 
-	constructor(threadService: IThreadService) {
-		this._proxy = threadService.get(MainContext.MainThreadOutputService);
+	constructor(mainContext: IMainContext) {
+		this._proxy = mainContext.getProxy(MainContext.MainThreadOutputService);
 	}
 
 	createOutputChannel(name: string): vscode.OutputChannel {

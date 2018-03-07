@@ -1,11 +1,10 @@
 {
 	"compilerOptions": {
-		"noLib": true,
-		"target": "es5",
+		"target": "es6",
 		"module": "commonjs",
-		"outDir": "./out"
-	},
-	"exclude": [
-		"node_modules"
-	]
+		"outDir": "./out",
+		"noUnusedLocals": true,
+		"lib": [ "es2016" ],
+		"strict": true
+	}
 }

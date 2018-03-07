@@ -5,15 +5,15 @@
 'use strict';
 
 import * as assert from 'assert';
-import {WrappingIndent} from 'vs/editor/common/editorCommon';
-import {CharacterHardWrappingLineMapperFactory} from 'vs/editor/common/viewModel/characterHardWrappingLineMapper';
-import {ILineMapperFactory, ILineMapping, OutputPosition} from 'vs/editor/common/viewModel/splitLinesCollection';
+import { WrappingIndent } from 'vs/editor/common/config/editorOptions';
+import { CharacterHardWrappingLineMapperFactory } from 'vs/editor/common/viewModel/characterHardWrappingLineMapper';
+import { ILineMapperFactory, ILineMapping } from 'vs/editor/common/viewModel/splitLinesCollection';
 
-function assertLineMapping(factory:ILineMapperFactory, tabSize:number, breakAfter:number, annotatedText:string, wrappingIndent = WrappingIndent.None) {
+function assertLineMapping(factory: ILineMapperFactory, tabSize: number, breakAfter: number, annotatedText: string, wrappingIndent = WrappingIndent.None): ILineMapping {
 
 	let rawText = '';
 	let currentLineIndex = 0;
-	let lineIndices:number[] = [];
+	let lineIndices: number[] = [];
 	for (let i = 0, len = annotatedText.length; i < len; i++) {
 		if (annotatedText.charAt(i) === '|') {
 			currentLineIndex++;
@@ -42,6 +42,8 @@ function assertLineMapping(factory:ILineMapperFactory, tabSize:number, breakAfte
 	}
 
 	assert.equal(actualAnnotatedText, annotatedText);
+
+	return mapper;
 }
 
 suite('Editor ViewModel - CharacterHardWrappingLineMapper', () => {
@@ -100,5 +102,16 @@ suite('Editor ViewModel - CharacterHardWrappingLineMapper', () => {
 	test('CharacterHardWrappingLineMapper - WrappingIndent.Same', () => {
 		let factory = new CharacterHardWrappingLineMapperFactory('', ' ', '');
 		assertLineMapping(factory, 4, 38, ' *123456789012345678901234567890123456|7890', WrappingIndent.Same);
+	});
+
+	test('issue #16332: Scroll bar overlaying on top of text', () => {
+		let factory = new CharacterHardWrappingLineMapperFactory('', ' ', '');
+		assertLineMapping(factory, 4, 24, 'a/ very/long/line/of/tex|t/that/expands/beyon|d/your/typical/line/|of/code/', WrappingIndent.Indent);
+	});
+
+	test('issue #35162: wrappingIndent not consistently working', () => {
+		let factory = new CharacterHardWrappingLineMapperFactory('', ' ', '');
+		let mapper = assertLineMapping(factory, 4, 24, '                t h i s |i s |a l |o n |g l |i n |e', WrappingIndent.Indent);
+		assert.equal(mapper.getWrappedLinesIndent(), '                \t');
 	});
 });

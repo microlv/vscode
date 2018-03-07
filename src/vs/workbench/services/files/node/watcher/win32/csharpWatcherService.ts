@@ -7,18 +7,21 @@
 
 import cp = require('child_process');
 
-import {FileChangeType} from 'vs/platform/files/common/files';
+import { FileChangeType } from 'vs/platform/files/common/files';
 import decoder = require('vs/base/node/decoder');
 import glob = require('vs/base/common/glob');
 import uri from 'vs/base/common/uri';
 
-import {IRawFileChange} from 'vs/workbench/services/files/node/watcher/common';
+import { IRawFileChange } from 'vs/workbench/services/files/node/watcher/common';
 
 export class OutOfProcessWin32FolderWatcher {
+
+	private static readonly MAX_RESTARTS = 5;
 
 	private static changeTypeMap: FileChangeType[] = [FileChangeType.UPDATED, FileChangeType.ADDED, FileChangeType.DELETED];
 
 	private handle: cp.ChildProcess;
+	private restartCounter: number;
 
 	constructor(
 		private watchedFolder: string,
@@ -27,29 +30,31 @@ export class OutOfProcessWin32FolderWatcher {
 		private errorCallback: (error: string) => void,
 		private verboseLogging: boolean
 	) {
+		this.restartCounter = 0;
+
 		this.startWatcher();
 	}
 
 	private startWatcher(): void {
-		let args = [this.watchedFolder];
+		const args = [this.watchedFolder];
 		if (this.verboseLogging) {
 			args.push('-verbose');
 		}
 
 		this.handle = cp.spawn(uri.parse(require.toUrl('vs/workbench/services/files/node/watcher/win32/CodeHelper.exe')).fsPath, args);
 
-		let stdoutLineDecoder = new decoder.LineDecoder();
+		const stdoutLineDecoder = new decoder.LineDecoder();
 
 		// Events over stdout
 		this.handle.stdout.on('data', (data: NodeBuffer) => {
 
 			// Collect raw events from output
-			let rawEvents: IRawFileChange[] = [];
+			const rawEvents: IRawFileChange[] = [];
 			stdoutLineDecoder.write(data).forEach((line) => {
-				let eventParts = line.split('|');
+				const eventParts = line.split('|');
 				if (eventParts.length === 2) {
-					let changeType = Number(eventParts[0]);
-					let absolutePath = eventParts[1];
+					const changeType = Number(eventParts[0]);
+					const absolutePath = eventParts[1];
 
 					// File Change Event (0 Changed, 1 Created, 2 Deleted)
 					if (changeType >= 0 && changeType < 3) {
@@ -84,17 +89,24 @@ export class OutOfProcessWin32FolderWatcher {
 		this.handle.stderr.on('data', (data: NodeBuffer) => this.onError(data));
 
 		// Exit
-		this.handle.on('exit', (code: any, signal: any) => this.onExit(code, signal));
+		this.handle.on('exit', (code: number, signal: string) => this.onExit(code, signal));
 	}
 
 	private onError(error: Error | NodeBuffer): void {
 		this.errorCallback('[FileWatcher] process error: ' + error.toString());
 	}
 
-	private onExit(code: any, signal: any): void {
+	private onExit(code: number, signal: string): void {
 		if (this.handle) { // exit while not yet being disposed is unexpected!
-			this.errorCallback('[FileWatcher] terminated unexpectedly (code: ' + code + ', signal: ' + signal + ')');
-			this.startWatcher(); // restart
+			this.errorCallback(`[FileWatcher] terminated unexpectedly (code: ${code}, signal: ${signal})`);
+
+			if (this.restartCounter <= OutOfProcessWin32FolderWatcher.MAX_RESTARTS) {
+				this.errorCallback('[FileWatcher] is restarted again...');
+				this.restartCounter++;
+				this.startWatcher(); // restart
+			} else {
+				this.errorCallback('[FileWatcher] Watcher failed to start after retrying for some time, giving up. Please report this as a bug report!');
+			}
 		}
 	}
 
