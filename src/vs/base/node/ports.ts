@@ -3,9 +3,7 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-'use strict';
-
-import net = require('net');
+import * as net from 'net';
 
 /**
  * @returns Returns a random port between 1025 and 65535.

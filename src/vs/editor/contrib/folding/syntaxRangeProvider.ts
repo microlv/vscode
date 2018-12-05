@@ -3,51 +3,67 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-'use strict';
-
-import { FoldingProvider, IFoldingRange } from 'vs/editor/common/modes';
+import { FoldingRangeProvider, FoldingRange, FoldingContext } from 'vs/editor/common/modes';
 import { onUnexpectedExternalError } from 'vs/base/common/errors';
-import { asWinJsPromise } from 'vs/base/common/async';
 import { ITextModel } from 'vs/editor/common/model';
 import { RangeProvider } from './folding';
-import { TPromise } from 'vs/base/common/winjs.base';
 import { MAX_LINE_NUMBER, FoldingRegions } from './foldingRanges';
+import { CancellationToken } from 'vs/base/common/cancellation';
 
-const MAX_FOLDING_REGIONS_FOR_INDENT_LIMIT = 5000;
+const MAX_FOLDING_REGIONS = 5000;
 
-export interface IFoldingRangeData extends IFoldingRange {
+export interface IFoldingRangeData extends FoldingRange {
 	rank: number;
 }
 
+const foldingContext: FoldingContext = {
+};
+
+export const ID_SYNTAX_PROVIDER = 'syntax';
+
 export class SyntaxRangeProvider implements RangeProvider {
 
-	constructor(private providers: FoldingProvider[]) {
+	readonly id = ID_SYNTAX_PROVIDER;
+
+	constructor(private editorModel: ITextModel, private providers: FoldingRangeProvider[], private limit = MAX_FOLDING_REGIONS) {
 	}
 
-	compute(model: ITextModel): TPromise<FoldingRegions> {
-		return collectSyntaxRanges(this.providers, model).then(ranges => {
-			let res = sanitizeRanges(ranges);
-			//console.log(res.toString());
-			return res;
+	compute(cancellationToken: CancellationToken): Thenable<FoldingRegions | null> {
+		return collectSyntaxRanges(this.providers, this.editorModel, cancellationToken).then(ranges => {
+			if (ranges) {
+				let res = sanitizeRanges(ranges, this.limit);
+				return res;
+			}
+			return null;
 		});
+	}
+
+	dispose() {
 	}
 
 }
 
-function collectSyntaxRanges(providers: FoldingProvider[], model: ITextModel): TPromise<IFoldingRangeData[]> {
-	const rangeData: IFoldingRangeData[] = [];
-	let promises = providers.map((provider, rank) => asWinJsPromise(token => provider.provideFoldingRanges(model, token)).then(list => {
-		if (list && Array.isArray(list.ranges)) {
-			let nLines = model.getLineCount();
-			for (let r of list.ranges) {
-				if (r.startLineNumber > 0 && r.endLineNumber > r.startLineNumber && r.endLineNumber <= nLines) {
-					rangeData.push({ startLineNumber: r.startLineNumber, endLineNumber: r.endLineNumber, rank, type: r.type });
+function collectSyntaxRanges(providers: FoldingRangeProvider[], model: ITextModel, cancellationToken: CancellationToken): Thenable<IFoldingRangeData[] | null> {
+	let rangeData: IFoldingRangeData[] | null = null;
+	let promises = providers.map((provider, i) => {
+		return Promise.resolve(provider.provideFoldingRanges(model, foldingContext, cancellationToken)).then(ranges => {
+			if (cancellationToken.isCancellationRequested) {
+				return;
+			}
+			if (Array.isArray(ranges)) {
+				if (!Array.isArray(rangeData)) {
+					rangeData = [];
+				}
+				let nLines = model.getLineCount();
+				for (let r of ranges) {
+					if (r.start > 0 && r.end > r.start && r.end <= nLines) {
+						rangeData.push({ start: r.start, end: r.end, rank: i, kind: r.kind });
+					}
 				}
 			}
-		}
-	}, onUnexpectedExternalError));
-
-	return TPromise.join(promises).then(() => {
+		}, onUnexpectedExternalError);
+	});
+	return Promise.all(promises).then(_ => {
 		return rangeData;
 	});
 }
@@ -57,7 +73,7 @@ export class RangesCollector {
 	private _endIndexes: number[];
 	private _nestingLevels: number[];
 	private _nestingLevelCounts: number[];
-	private _types: string[];
+	private _types: (string | undefined)[];
 	private _length: number;
 	private _foldingRangesLimit: number;
 
@@ -71,7 +87,7 @@ export class RangesCollector {
 		this._foldingRangesLimit = foldingRangesLimit;
 	}
 
-	public add(startLineNumber: number, endLineNumber: number, type: string, nestingLevel: number) {
+	public add(startLineNumber: number, endLineNumber: number, type: string | undefined, nestingLevel: number) {
 		if (startLineNumber > MAX_LINE_NUMBER || endLineNumber > MAX_LINE_NUMBER) {
 			return;
 		}
@@ -108,12 +124,13 @@ export class RangesCollector {
 					entries += n;
 				}
 			}
-			let startIndexes = new Uint32Array(entries);
-			let endIndexes = new Uint32Array(entries);
-			let types = [];
+
+			let startIndexes = new Uint32Array(this._foldingRangesLimit);
+			let endIndexes = new Uint32Array(this._foldingRangesLimit);
+			let types: (string | undefined)[] = [];
 			for (let i = 0, k = 0; i < this._length; i++) {
 				let level = this._nestingLevels[i];
-				if (level < maxLevel) {
+				if (level < maxLevel || (level === maxLevel && entries++ < this._foldingRangesLimit)) {
 					startIndexes[k] = this._startIndexes[i];
 					endIndexes[k] = this._endIndexes[i];
 					types[k] = this._types[i];
@@ -127,36 +144,40 @@ export class RangesCollector {
 
 }
 
-export function sanitizeRanges(rangeData: IFoldingRangeData[]): FoldingRegions {
+export function sanitizeRanges(rangeData: IFoldingRangeData[], limit: number): FoldingRegions {
 
 	let sorted = rangeData.sort((d1, d2) => {
-		let diff = d1.startLineNumber - d2.startLineNumber;
+		let diff = d1.start - d2.start;
 		if (diff === 0) {
 			diff = d1.rank - d2.rank;
 		}
 		return diff;
 	});
-	let collector = new RangesCollector(MAX_FOLDING_REGIONS_FOR_INDENT_LIMIT);
+	let collector = new RangesCollector(limit);
 
-	let top: IFoldingRangeData = null;
-	let previous = [];
+	let top: IFoldingRangeData | undefined = void 0;
+	let previous: IFoldingRangeData[] = [];
 	for (let entry of sorted) {
 		if (!top) {
 			top = entry;
-			collector.add(entry.startLineNumber, entry.endLineNumber, entry.type, previous.length);
+			collector.add(entry.start, entry.end, entry.kind && entry.kind.value, previous.length);
 		} else {
-			if (entry.startLineNumber > top.startLineNumber) {
-				if (entry.endLineNumber <= top.endLineNumber) {
+			if (entry.start > top.start) {
+				if (entry.end <= top.end) {
 					previous.push(top);
 					top = entry;
-					collector.add(entry.startLineNumber, entry.endLineNumber, entry.type, previous.length);
-				} else if (entry.startLineNumber > top.endLineNumber) {
-					do {
-						top = previous.pop();
-					} while (top && entry.startLineNumber > top.endLineNumber);
-					previous.push(top);
-					top = entry;
-					collector.add(entry.startLineNumber, entry.endLineNumber, entry.type, previous.length);
+					collector.add(entry.start, entry.end, entry.kind && entry.kind.value, previous.length);
+				} else {
+					if (entry.start > top.end) {
+						do {
+							top = previous.pop();
+						} while (top && entry.start > top.end);
+						if (top) {
+							previous.push(top);
+						}
+						top = entry;
+					}
+					collector.add(entry.start, entry.end, entry.kind && entry.kind.value, previous.length);
 				}
 			}
 		}

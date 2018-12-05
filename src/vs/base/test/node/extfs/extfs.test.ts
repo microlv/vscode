@@ -3,25 +3,22 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-'use strict';
-
-import assert = require('assert');
-import os = require('os');
-
-import path = require('path');
-import fs = require('fs');
-
-import uuid = require('vs/base/common/uuid');
-import strings = require('vs/base/common/strings');
-import extfs = require('vs/base/node/extfs');
-import { onError } from 'vs/base/test/common/utils';
+import * as assert from 'assert';
+import * as fs from 'fs';
+import * as os from 'os';
+import * as path from 'path';
 import { Readable } from 'stream';
+import { canNormalize } from 'vs/base/common/normalization';
 import { isLinux, isWindows } from 'vs/base/common/platform';
+import * as uuid from 'vs/base/common/uuid';
+import * as extfs from 'vs/base/node/extfs';
+import { getPathFromAmdModule } from 'vs/base/common/amd';
+import { CancellationTokenSource } from 'vs/base/common/cancellation';
 
 const ignore = () => { };
 
 const mkdirp = (path: string, mode: number, callback: (error) => void) => {
-	extfs.mkdirp(path, mode).done(() => callback(null), error => callback(error));
+	extfs.mkdirp(path, mode).then(() => callback(null), error => callback(error));
 };
 
 const chunkSize = 64 * 1024;
@@ -58,14 +55,14 @@ function toReadable(value: string, throwError?: boolean): Readable {
 
 suite('Extfs', () => {
 
-	test('mkdirp', function (done: () => void) {
+	test('mkdirp', function (done) {
 		const id = uuid.generateUuid();
 		const parentDir = path.join(os.tmpdir(), 'vsctests', id);
 		const newDir = path.join(parentDir, 'extfs', id);
 
 		mkdirp(newDir, 493, error => {
 			if (error) {
-				return onError(error, done);
+				return done(error);
 			}
 
 			assert.ok(fs.existsSync(newDir));
@@ -74,7 +71,7 @@ suite('Extfs', () => {
 		}); // 493 = 0755
 	});
 
-	test('stat link', function (done: () => void) {
+	test('stat link', function (done) {
 		if (isWindows) {
 			// Symlinks are not the same on win, and we can not create them programitically without admin privileges
 			return done();
@@ -89,21 +86,21 @@ suite('Extfs', () => {
 
 		mkdirp(directory, 493, error => {
 			if (error) {
-				return onError(error, done);
+				return done(error);
 			}
 
 			fs.symlinkSync(directory, symbolicLink);
 
 			extfs.statLink(directory, (error, statAndIsLink) => {
 				if (error) {
-					return onError(error, done);
+					return done(error);
 				}
 
 				assert.ok(!statAndIsLink.isSymbolicLink);
 
 				extfs.statLink(symbolicLink, (error, statAndIsLink) => {
 					if (error) {
-						return onError(error, done);
+						return done(error);
 					}
 
 					assert.ok(statAndIsLink.isSymbolicLink);
@@ -124,14 +121,14 @@ suite('Extfs', () => {
 		assert.ok(!fs.existsSync(newDir));
 	});
 
-	test('delSync - simple', function (done: () => void) {
+	test('delSync - simple', function (done) {
 		const id = uuid.generateUuid();
 		const parentDir = path.join(os.tmpdir(), 'vsctests', id);
 		const newDir = path.join(parentDir, 'extfs', id);
 
 		mkdirp(newDir, 493, error => {
 			if (error) {
-				return onError(error, done);
+				return done(error);
 			}
 
 			fs.writeFileSync(path.join(newDir, 'somefile.txt'), 'Contents');
@@ -144,14 +141,14 @@ suite('Extfs', () => {
 		}); // 493 = 0755
 	});
 
-	test('delSync - recursive folder structure', function (done: () => void) {
+	test('delSync - recursive folder structure', function (done) {
 		const id = uuid.generateUuid();
 		const parentDir = path.join(os.tmpdir(), 'vsctests', id);
 		const newDir = path.join(parentDir, 'extfs', id);
 
 		mkdirp(newDir, 493, error => {
 			if (error) {
-				return onError(error, done);
+				return done(error);
 			}
 
 			fs.writeFileSync(path.join(newDir, 'somefile.txt'), 'Contents');
@@ -167,17 +164,17 @@ suite('Extfs', () => {
 		}); // 493 = 0755
 	});
 
-	test('copy, move and delete', function (done: () => void) {
+	test('copy, move and delete', function (done) {
 		const id = uuid.generateUuid();
 		const id2 = uuid.generateUuid();
-		const sourceDir = require.toUrl('./fixtures');
+		const sourceDir = getPathFromAmdModule(require, './fixtures');
 		const parentDir = path.join(os.tmpdir(), 'vsctests', 'extfs');
 		const targetDir = path.join(parentDir, id);
 		const targetDir2 = path.join(parentDir, id2);
 
 		extfs.copy(sourceDir, targetDir, error => {
 			if (error) {
-				return onError(error, done);
+				return done(error);
 			}
 
 			assert.ok(fs.existsSync(targetDir));
@@ -189,7 +186,7 @@ suite('Extfs', () => {
 
 			extfs.mv(targetDir, targetDir2, error => {
 				if (error) {
-					return onError(error, done);
+					return done(error);
 				}
 
 				assert.ok(!fs.existsSync(targetDir));
@@ -202,7 +199,7 @@ suite('Extfs', () => {
 
 				extfs.mv(path.join(targetDir2, 'index.html'), path.join(targetDir2, 'index_moved.html'), error => {
 					if (error) {
-						return onError(error, done);
+						return done(error);
 					}
 
 					assert.ok(!fs.existsSync(path.join(targetDir2, 'index.html')));
@@ -210,11 +207,11 @@ suite('Extfs', () => {
 
 					extfs.del(parentDir, os.tmpdir(), error => {
 						if (error) {
-							return onError(error, done);
+							return done(error);
 						}
 					}, error => {
 						if (error) {
-							return onError(error, done);
+							return done(error);
 						}
 						assert.ok(!fs.existsSync(parentDir));
 						done();
@@ -224,15 +221,15 @@ suite('Extfs', () => {
 		});
 	});
 
-	test('readdir', function (done: () => void) {
-		if (strings.canNormalize && typeof process.versions['electron'] !== 'undefined' /* needs electron */) {
+	test('readdir', function (done) {
+		if (canNormalize && typeof process.versions['electron'] !== 'undefined' /* needs electron */) {
 			const id = uuid.generateUuid();
 			const parentDir = path.join(os.tmpdir(), 'vsctests', id);
 			const newDir = path.join(parentDir, 'extfs', id, 'öäü');
 
 			mkdirp(newDir, 493, error => {
 				if (error) {
-					return onError(error, done);
+					return done(error);
 				}
 
 				assert.ok(fs.existsSync(newDir));
@@ -248,7 +245,7 @@ suite('Extfs', () => {
 		}
 	});
 
-	test('writeFileAndFlush (string)', function (done: () => void) {
+	test('writeFileAndFlush (string)', function (done) {
 		const id = uuid.generateUuid();
 		const parentDir = path.join(os.tmpdir(), 'vsctests', id);
 		const newDir = path.join(parentDir, 'extfs', id);
@@ -256,14 +253,14 @@ suite('Extfs', () => {
 
 		mkdirp(newDir, 493, error => {
 			if (error) {
-				return onError(error, done);
+				return done(error);
 			}
 
 			assert.ok(fs.existsSync(newDir));
 
 			extfs.writeFileAndFlush(testFile, 'Hello World', null, error => {
 				if (error) {
-					return onError(error, done);
+					return done(error);
 				}
 
 				assert.equal(fs.readFileSync(testFile), 'Hello World');
@@ -272,7 +269,7 @@ suite('Extfs', () => {
 
 				extfs.writeFileAndFlush(testFile, largeString, null, error => {
 					if (error) {
-						return onError(error, done);
+						return done(error);
 					}
 
 					assert.equal(fs.readFileSync(testFile), largeString);
@@ -283,7 +280,7 @@ suite('Extfs', () => {
 		});
 	});
 
-	test('writeFileAndFlush (stream)', function (done: () => void) {
+	test('writeFileAndFlush (stream)', function (done) {
 		const id = uuid.generateUuid();
 		const parentDir = path.join(os.tmpdir(), 'vsctests', id);
 		const newDir = path.join(parentDir, 'extfs', id);
@@ -291,14 +288,14 @@ suite('Extfs', () => {
 
 		mkdirp(newDir, 493, error => {
 			if (error) {
-				return onError(error, done);
+				return done(error);
 			}
 
 			assert.ok(fs.existsSync(newDir));
 
 			extfs.writeFileAndFlush(testFile, toReadable('Hello World'), null, error => {
 				if (error) {
-					return onError(error, done);
+					return done(error);
 				}
 
 				assert.equal(fs.readFileSync(testFile), 'Hello World');
@@ -307,7 +304,7 @@ suite('Extfs', () => {
 
 				extfs.writeFileAndFlush(testFile, toReadable(largeString), null, error => {
 					if (error) {
-						return onError(error, done);
+						return done(error);
 					}
 
 					assert.equal(fs.readFileSync(testFile), largeString);
@@ -318,23 +315,23 @@ suite('Extfs', () => {
 		});
 	});
 
-	test('writeFileAndFlush (file stream)', function (done: () => void) {
+	test('writeFileAndFlush (file stream)', function (done) {
 		const id = uuid.generateUuid();
 		const parentDir = path.join(os.tmpdir(), 'vsctests', id);
-		const sourceFile = require.toUrl('./fixtures/index.html');
+		const sourceFile = getPathFromAmdModule(require, './fixtures/index.html');
 		const newDir = path.join(parentDir, 'extfs', id);
 		const testFile = path.join(newDir, 'flushed.txt');
 
 		mkdirp(newDir, 493, error => {
 			if (error) {
-				return onError(error, done);
+				return done(error);
 			}
 
 			assert.ok(fs.existsSync(newDir));
 
 			extfs.writeFileAndFlush(testFile, fs.createReadStream(sourceFile), null, error => {
 				if (error) {
-					return onError(error, done);
+					return done(error);
 				}
 
 				assert.equal(fs.readFileSync(testFile).toString(), fs.readFileSync(sourceFile).toString());
@@ -344,7 +341,7 @@ suite('Extfs', () => {
 		});
 	});
 
-	test('writeFileAndFlush (string, error handling)', function (done: () => void) {
+	test('writeFileAndFlush (string, error handling)', function (done) {
 		const id = uuid.generateUuid();
 		const parentDir = path.join(os.tmpdir(), 'vsctests', id);
 		const newDir = path.join(parentDir, 'extfs', id);
@@ -352,7 +349,7 @@ suite('Extfs', () => {
 
 		mkdirp(newDir, 493, error => {
 			if (error) {
-				return onError(error, done);
+				return done(error);
 			}
 
 			assert.ok(fs.existsSync(newDir));
@@ -361,7 +358,7 @@ suite('Extfs', () => {
 
 			extfs.writeFileAndFlush(testFile, 'Hello World', null, error => {
 				if (!error) {
-					return onError(new Error('Expected error for writing to readonly file'), done);
+					return done(new Error('Expected error for writing to readonly file'));
 				}
 
 				extfs.del(parentDir, os.tmpdir(), done, ignore);
@@ -369,7 +366,7 @@ suite('Extfs', () => {
 		});
 	});
 
-	test('writeFileAndFlush (stream, error handling EISDIR)', function (done: () => void) {
+	test('writeFileAndFlush (stream, error handling EISDIR)', function (done) {
 		const id = uuid.generateUuid();
 		const parentDir = path.join(os.tmpdir(), 'vsctests', id);
 		const newDir = path.join(parentDir, 'extfs', id);
@@ -377,7 +374,7 @@ suite('Extfs', () => {
 
 		mkdirp(newDir, 493, error => {
 			if (error) {
-				return onError(error, done);
+				return done(error);
 			}
 
 			assert.ok(fs.existsSync(newDir));
@@ -387,7 +384,7 @@ suite('Extfs', () => {
 			const readable = toReadable('Hello World');
 			extfs.writeFileAndFlush(testFile, readable, null, error => {
 				if (!error || (<any>error).code !== 'EISDIR') {
-					return onError(new Error('Expected EISDIR error for writing to folder but got: ' + (error ? (<any>error).code : 'no error')), done);
+					return done(new Error('Expected EISDIR error for writing to folder but got: ' + (error ? (<any>error).code : 'no error')));
 				}
 
 				// verify that the stream is still consumable (for https://github.com/Microsoft/vscode/issues/42542)
@@ -398,7 +395,7 @@ suite('Extfs', () => {
 		});
 	});
 
-	test('writeFileAndFlush (stream, error handling READERROR)', function (done: () => void) {
+	test('writeFileAndFlush (stream, error handling READERROR)', function (done) {
 		const id = uuid.generateUuid();
 		const parentDir = path.join(os.tmpdir(), 'vsctests', id);
 		const newDir = path.join(parentDir, 'extfs', id);
@@ -406,14 +403,14 @@ suite('Extfs', () => {
 
 		mkdirp(newDir, 493, error => {
 			if (error) {
-				return onError(error, done);
+				return done(error);
 			}
 
 			assert.ok(fs.existsSync(newDir));
 
 			extfs.writeFileAndFlush(testFile, toReadable('Hello World', true /* throw error */), null, error => {
 				if (!error || error.message !== readError) {
-					return onError(new Error('Expected error for writing to folder'), done);
+					return done(new Error('Expected error for writing to folder'));
 				}
 
 				extfs.del(parentDir, os.tmpdir(), done, ignore);
@@ -421,7 +418,7 @@ suite('Extfs', () => {
 		});
 	});
 
-	test('writeFileAndFlush (stream, error handling EACCES)', function (done: () => void) {
+	test('writeFileAndFlush (stream, error handling EACCES)', function (done) {
 		if (isLinux) {
 			return done(); // somehow this test fails on Linux in our TFS builds
 		}
@@ -433,7 +430,7 @@ suite('Extfs', () => {
 
 		mkdirp(newDir, 493, error => {
 			if (error) {
-				return onError(error, done);
+				return done(error);
 			}
 
 			assert.ok(fs.existsSync(newDir));
@@ -443,7 +440,7 @@ suite('Extfs', () => {
 
 			extfs.writeFileAndFlush(testFile, toReadable('Hello World'), null, error => {
 				if (!error || !((<any>error).code !== 'EACCES' || (<any>error).code !== 'EPERM')) {
-					return onError(new Error('Expected EACCES/EPERM error for writing to folder but got: ' + (error ? (<any>error).code : 'no error')), done);
+					return done(new Error('Expected EACCES/EPERM error for writing to folder but got: ' + (error ? (<any>error).code : 'no error')));
 				}
 
 				extfs.del(parentDir, os.tmpdir(), done, ignore);
@@ -451,16 +448,16 @@ suite('Extfs', () => {
 		});
 	});
 
-	test('writeFileAndFlush (file stream, error handling)', function (done: () => void) {
+	test('writeFileAndFlush (file stream, error handling)', function (done) {
 		const id = uuid.generateUuid();
 		const parentDir = path.join(os.tmpdir(), 'vsctests', id);
-		const sourceFile = require.toUrl('./fixtures/index.html');
+		const sourceFile = getPathFromAmdModule(require, './fixtures/index.html');
 		const newDir = path.join(parentDir, 'extfs', id);
 		const testFile = path.join(newDir, 'flushed.txt');
 
 		mkdirp(newDir, 493, error => {
 			if (error) {
-				return onError(error, done);
+				return done(error);
 			}
 
 			assert.ok(fs.existsSync(newDir));
@@ -469,7 +466,7 @@ suite('Extfs', () => {
 
 			extfs.writeFileAndFlush(testFile, fs.createReadStream(sourceFile), null, error => {
 				if (!error) {
-					return onError(new Error('Expected error for writing to folder'), done);
+					return done(new Error('Expected error for writing to folder'));
 				}
 
 				extfs.del(parentDir, os.tmpdir(), done, ignore);
@@ -477,7 +474,7 @@ suite('Extfs', () => {
 		});
 	});
 
-	test('writeFileAndFlushSync', function (done: () => void) {
+	test('writeFileAndFlushSync', function (done) {
 		const id = uuid.generateUuid();
 		const parentDir = path.join(os.tmpdir(), 'vsctests', id);
 		const newDir = path.join(parentDir, 'extfs', id);
@@ -485,7 +482,7 @@ suite('Extfs', () => {
 
 		mkdirp(newDir, 493, error => {
 			if (error) {
-				return onError(error, done);
+				return done(error);
 			}
 
 			assert.ok(fs.existsSync(newDir));
@@ -563,5 +560,58 @@ suite('Extfs', () => {
 
 			extfs.del(parentDir, os.tmpdir(), done, ignore);
 		});
+	});
+
+	test('mkdirp cancellation', (done) => {
+		const id = uuid.generateUuid();
+		const parentDir = path.join(os.tmpdir(), 'vsctests', id);
+		const newDir = path.join(parentDir, 'extfs', id);
+
+		const source = new CancellationTokenSource();
+
+		const mkdirpPromise = extfs.mkdirp(newDir, 493, source.token);
+		source.cancel();
+
+		return mkdirpPromise.then(res => {
+			assert.equal(res, false);
+
+			extfs.del(parentDir, os.tmpdir(), done, ignore);
+		});
+	});
+
+	test('sanitizeFilePath', () => {
+		if (isWindows) {
+			assert.equal(extfs.sanitizeFilePath('.', 'C:\\the\\cwd'), 'C:\\the\\cwd');
+			assert.equal(extfs.sanitizeFilePath('', 'C:\\the\\cwd'), 'C:\\the\\cwd');
+
+			assert.equal(extfs.sanitizeFilePath('C:', 'C:\\the\\cwd'), 'C:\\');
+			assert.equal(extfs.sanitizeFilePath('C:\\', 'C:\\the\\cwd'), 'C:\\');
+			assert.equal(extfs.sanitizeFilePath('C:\\\\', 'C:\\the\\cwd'), 'C:\\');
+
+			assert.equal(extfs.sanitizeFilePath('C:\\folder\\my.txt', 'C:\\the\\cwd'), 'C:\\folder\\my.txt');
+			assert.equal(extfs.sanitizeFilePath('C:\\folder\\my', 'C:\\the\\cwd'), 'C:\\folder\\my');
+			assert.equal(extfs.sanitizeFilePath('C:\\folder\\..\\my', 'C:\\the\\cwd'), 'C:\\my');
+			assert.equal(extfs.sanitizeFilePath('C:\\folder\\my\\', 'C:\\the\\cwd'), 'C:\\folder\\my');
+			assert.equal(extfs.sanitizeFilePath('C:\\folder\\my\\\\\\', 'C:\\the\\cwd'), 'C:\\folder\\my');
+
+			assert.equal(extfs.sanitizeFilePath('my.txt', 'C:\\the\\cwd'), 'C:\\the\\cwd\\my.txt');
+			assert.equal(extfs.sanitizeFilePath('my.txt\\', 'C:\\the\\cwd'), 'C:\\the\\cwd\\my.txt');
+
+			assert.equal(extfs.sanitizeFilePath('\\\\localhost\\folder\\my', 'C:\\the\\cwd'), '\\\\localhost\\folder\\my');
+			assert.equal(extfs.sanitizeFilePath('\\\\localhost\\folder\\my\\', 'C:\\the\\cwd'), '\\\\localhost\\folder\\my');
+		} else {
+			assert.equal(extfs.sanitizeFilePath('.', '/the/cwd'), '/the/cwd');
+			assert.equal(extfs.sanitizeFilePath('', '/the/cwd'), '/the/cwd');
+			assert.equal(extfs.sanitizeFilePath('/', '/the/cwd'), '/');
+
+			assert.equal(extfs.sanitizeFilePath('/folder/my.txt', '/the/cwd'), '/folder/my.txt');
+			assert.equal(extfs.sanitizeFilePath('/folder/my', '/the/cwd'), '/folder/my');
+			assert.equal(extfs.sanitizeFilePath('/folder/../my', '/the/cwd'), '/my');
+			assert.equal(extfs.sanitizeFilePath('/folder/my/', '/the/cwd'), '/folder/my');
+			assert.equal(extfs.sanitizeFilePath('/folder/my///', '/the/cwd'), '/folder/my');
+
+			assert.equal(extfs.sanitizeFilePath('my.txt', '/the/cwd'), '/the/cwd/my.txt');
+			assert.equal(extfs.sanitizeFilePath('my.txt/', '/the/cwd'), '/the/cwd/my.txt');
+		}
 	});
 });

@@ -3,10 +3,8 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-'use strict';
-
 import * as path from 'path';
-import * as fs from 'original-fs';
+import * as fs from 'fs';
 import { IEnvironmentService } from 'vs/platform/environment/common/environment';
 import { writeFileAndFlushSync } from 'vs/base/node/extfs';
 import { isUndefined, isUndefinedOrNull } from 'vs/base/common/types';
@@ -15,19 +13,20 @@ import { ILogService } from 'vs/platform/log/common/log';
 
 export class FileStorage {
 
-	private database: object = null;
+	private _lazyDatabase: object | null = null;
 
 	constructor(private dbPath: string, private onError: (error) => void) { }
 
-	private ensureLoaded(): void {
-		if (!this.database) {
-			this.database = this.loadSync();
+	private get database(): object {
+		if (!this._lazyDatabase) {
+			this._lazyDatabase = this.loadSync();
 		}
+		return this._lazyDatabase;
 	}
 
-	public getItem<T>(key: string, defaultValue?: T): T {
-		this.ensureLoaded();
-
+	getItem<T>(key: string, defaultValue: T): T;
+	getItem<T>(key: string, defaultValue?: T): T | undefined;
+	getItem<T>(key: string, defaultValue?: T): T | undefined {
 		const res = this.database[key];
 		if (isUndefinedOrNull(res)) {
 			return defaultValue;
@@ -36,9 +35,7 @@ export class FileStorage {
 		return res;
 	}
 
-	public setItem(key: string, data: any): void {
-		this.ensureLoaded();
-
+	setItem(key: string, data: any): void {
 		// Remove an item when it is undefined or null
 		if (isUndefinedOrNull(data)) {
 			return this.removeItem(key);
@@ -55,9 +52,7 @@ export class FileStorage {
 		this.saveSync();
 	}
 
-	public removeItem(key: string): void {
-		this.ensureLoaded();
-
+	removeItem(key: string): void {
 		// Only update if the key is actually present (not undefined)
 		if (!isUndefined(this.database[key])) {
 			this.database[key] = void 0;
@@ -92,19 +87,21 @@ export class StateService implements IStateService {
 
 	private fileStorage: FileStorage;
 
-	constructor( @IEnvironmentService environmentService: IEnvironmentService, @ILogService logService: ILogService) {
+	constructor(@IEnvironmentService environmentService: IEnvironmentService, @ILogService logService: ILogService) {
 		this.fileStorage = new FileStorage(path.join(environmentService.userDataPath, 'storage.json'), error => logService.error(error));
 	}
 
-	public getItem<T>(key: string, defaultValue?: T): T {
+	getItem<T>(key: string, defaultValue: T): T;
+	getItem<T>(key: string, defaultValue: T | undefined): T | undefined;
+	getItem<T>(key: string, defaultValue?: T): T | undefined {
 		return this.fileStorage.getItem(key, defaultValue);
 	}
 
-	public setItem(key: string, data: any): void {
+	setItem(key: string, data: any): void {
 		this.fileStorage.setItem(key, data);
 	}
 
-	public removeItem(key: string): void {
+	removeItem(key: string): void {
 		this.fileStorage.removeItem(key);
 	}
 }

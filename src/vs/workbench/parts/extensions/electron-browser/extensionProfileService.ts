@@ -3,23 +3,23 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-'use strict';
-
 import * as nls from 'vs/nls';
-import Event, { Emitter } from 'vs/base/common/event';
+import { Event, Emitter } from 'vs/base/common/event';
 import { IInstantiationService } from 'vs/platform/instantiation/common/instantiation';
 import { IExtensionHostProfile, ProfileSession, IExtensionService } from 'vs/workbench/services/extensions/common/extensions';
 import { Disposable, IDisposable, dispose } from 'vs/base/common/lifecycle';
 import { onUnexpectedError } from 'vs/base/common/errors';
 import { append, $, addDisposableListener } from 'vs/base/browser/dom';
-import { StatusbarAlignment, IStatusbarRegistry, StatusbarItemDescriptor, Extensions, IStatusbarItem } from 'vs/workbench/browser/parts/statusbar/statusbar';
+import { IStatusbarRegistry, StatusbarItemDescriptor, Extensions, IStatusbarItem } from 'vs/workbench/browser/parts/statusbar/statusbar';
+import { StatusbarAlignment } from 'vs/platform/statusbar/common/statusbar';
 import { Registry } from 'vs/platform/registry/common/platform';
-import { IExtensionHostProfileService, ProfileSessionState, RuntimeExtensionsInput } from 'vs/workbench/parts/extensions/electron-browser/runtimeExtensionsEditor';
-import { IWorkbenchEditorService } from 'vs/workbench/services/editor/common/editorService';
+import { IExtensionHostProfileService, ProfileSessionState } from 'vs/workbench/parts/extensions/electron-browser/runtimeExtensionsEditor';
+import { IEditorService } from 'vs/workbench/services/editor/common/editorService';
 import { IWindowsService } from 'vs/platform/windows/common/windows';
-import { IConfirmationService } from 'vs/platform/dialogs/common/dialogs';
+import { IDialogService } from 'vs/platform/dialogs/common/dialogs';
 import { randomPort } from 'vs/base/node/ports';
 import product from 'vs/platform/node/product';
+import { RuntimeExtensionsInput } from 'vs/workbench/services/extensions/electron-browser/runtimeExtensionsInput';
 
 export class ExtensionHostProfileService extends Disposable implements IExtensionHostProfileService {
 
@@ -31,6 +31,7 @@ export class ExtensionHostProfileService extends Disposable implements IExtensio
 	private readonly _onDidChangeLastProfile: Emitter<void> = this._register(new Emitter<void>());
 	public readonly onDidChangeLastProfile: Event<void> = this._onDidChangeLastProfile.event;
 
+	private readonly _unresponsiveProfiles = new Map<string, IExtensionHostProfile>();
 	private _profile: IExtensionHostProfile;
 	private _profileSession: ProfileSession;
 	private _state: ProfileSessionState;
@@ -40,10 +41,10 @@ export class ExtensionHostProfileService extends Disposable implements IExtensio
 
 	constructor(
 		@IExtensionService private readonly _extensionService: IExtensionService,
-		@IWorkbenchEditorService private readonly _editorService: IWorkbenchEditorService,
+		@IEditorService private readonly _editorService: IEditorService,
 		@IInstantiationService private readonly _instantiationService: IInstantiationService,
 		@IWindowsService private readonly _windowsService: IWindowsService,
-		@IConfirmationService private readonly _confirmationService: IConfirmationService
+		@IDialogService private readonly _dialogService: IDialogService
 	) {
 		super();
 		this._profile = null;
@@ -75,14 +76,14 @@ export class ExtensionHostProfileService extends Disposable implements IExtensio
 		}
 
 		if (!this._extensionService.canProfileExtensionHost()) {
-			return this._confirmationService.confirm({
+			return this._dialogService.confirm({
 				type: 'info',
 				message: nls.localize('restart1', "Profile Extensions"),
 				detail: nls.localize('restart2', "In order to profile extensions a restart is required. Do you want to restart '{0}' now?", product.nameLong),
 				primaryButton: nls.localize('restart3', "Restart"),
 				secondaryButton: nls.localize('cancel', "Cancel")
-			}).then(restart => {
-				if (restart) {
+			}).then(res => {
+				if (res.confirmed) {
 					this._windowsService.relaunch({ addArgs: [`--inspect-extensions=${randomPort()}`] });
 				}
 			});
@@ -120,13 +121,15 @@ export class ExtensionHostProfileService extends Disposable implements IExtensio
 		this._onDidChangeLastProfile.fire(void 0);
 	}
 
-	public getLastProfile(): IExtensionHostProfile {
-		return this._profile;
+	getUnresponsiveProfile(extensionId: string): IExtensionHostProfile | undefined {
+		return this._unresponsiveProfiles.get(extensionId);
 	}
 
-	public clearLastProfile(): void {
-		this._setLastProfile(null);
+	setUnresponsiveProfile(extensionId: string, profile: IExtensionHostProfile): void {
+		this._unresponsiveProfiles.set(extensionId, profile);
+		this._setLastProfile(profile);
 	}
+
 }
 
 export class ProfileExtHostStatusbarItem implements IStatusbarItem {
@@ -137,7 +140,7 @@ export class ProfileExtHostStatusbarItem implements IStatusbarItem {
 	private statusBarItem: HTMLElement;
 	private label: HTMLElement;
 	private timeStarted: number;
-	private labelUpdater: number;
+	private labelUpdater: any;
 	private clickHandler: () => void;
 
 	constructor() {

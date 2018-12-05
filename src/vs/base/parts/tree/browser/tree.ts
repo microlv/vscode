@@ -2,15 +2,14 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-'use strict';
 
-import WinJS = require('vs/base/common/winjs.base');
-import Touch = require('vs/base/browser/touch');
-import Mouse = require('vs/base/browser/mouseEvent');
-import Keyboard = require('vs/base/browser/keyboardEvent');
+import * as WinJS from 'vs/base/common/winjs.base';
+import * as Touch from 'vs/base/browser/touch';
+import * as Mouse from 'vs/base/browser/mouseEvent';
+import * as Keyboard from 'vs/base/browser/keyboardEvent';
 import { INavigator } from 'vs/base/common/iterator';
 import { ScrollbarVisibility } from 'vs/base/common/scrollable';
-import Event from 'vs/base/common/event';
+import { Event } from 'vs/base/common/event';
 import { IAction, IActionItem } from 'vs/base/common/actions';
 import { Color } from 'vs/base/common/color';
 import { IItemCollapseEvent, IItemExpandEvent } from 'vs/base/parts/tree/browser/treeModel';
@@ -25,6 +24,7 @@ export interface ITree {
 	onDidExpandItem: Event<IItemExpandEvent>;
 	onDidCollapseItem: Event<IItemCollapseEvent>;
 	onDidDispose: Event<void>;
+	onDidScroll: Event<void>;
 
 	/**
 	 * Returns the tree's DOM element.
@@ -79,6 +79,11 @@ export interface ITree {
 	refresh(element?: any, recursive?: boolean): WinJS.Promise;
 
 	/**
+	 * Updates an element's width.
+	 */
+	updateWidth(element: any): void;
+
+	/**
 	 * Expands an element.
 	 * The returned promise returns a boolean for whether the element was expanded or not.
 	 */
@@ -102,13 +107,6 @@ export interface ITree {
 	 * The returned promise returns a boolean for whether the elements were collapsed or not.
 	 */
 	collapseAll(elements?: any[], recursive?: boolean): WinJS.Promise;
-
-	/**
-	 * Collapses several elements.
-	 * Collapses all elements at the greatest tree depth that has expanded elements.
-	 * The returned promise returns a boolean for whether the elements were collapsed or not.
-	 */
-	collapseDeepestExpandedLevel(): WinJS.Promise;
 
 	/**
 	 * Toggles an element's expansion state.
@@ -142,6 +140,11 @@ export interface ITree {
 	 * Useful when calling `reveal(element, relativeTop)`.
 	 */
 	getRelativeTop(element: any): number;
+
+	/**
+	 * Returns the top-most visible element.
+	 */
+	getFirstVisibleElement(): any;
 
 	/**
 	 * Returns a number between 0 and 1 representing how much the tree is scroll down. 0 means all the way
@@ -360,6 +363,10 @@ export interface IDataSource {
 	/**
 	 * Returns the unique identifier of the given element.
 	 * No more than one element may use a given identifier.
+	 *
+	 * You should not attempt to "move" an element to a different
+	 * parent by keeping its ID. The idea here is to have tree location
+	 * related IDs (eg. full file path, in the Explorer example).
 	 */
 	getId(tree: ITree, element: any): string;
 
@@ -548,6 +555,11 @@ export interface IController {
 	onKeyUp(tree: ITree, event: Keyboard.IKeyboardEvent): boolean;
 
 	/**
+	 * Called when a mouse middle button is pressed down on an element.
+	 */
+	onMouseMiddleClick?(tree: ITree, element: any, event: Mouse.IMouseEvent): boolean;
+
+	/**
 	 * Called when a mouse button is pressed down on an element.
 	 */
 	onMouseDown?(tree: ITree, element: any, event: Mouse.IMouseEvent): boolean;
@@ -558,12 +570,12 @@ export interface IController {
 	onMouseUp?(tree: ITree, element: any, event: Mouse.IMouseEvent): boolean;
 }
 
-export enum DragOverEffect {
+export const enum DragOverEffect {
 	COPY,
 	MOVE
 }
 
-export enum DragOverBubble {
+export const enum DragOverBubble {
 	BUBBLE_DOWN,
 	BUBBLE_UP
 }
@@ -666,6 +678,7 @@ export interface ITreeConfiguration {
 	filter?: IFilter;
 	sorter?: ISorter;
 	accessibilityProvider?: IAccessibilityProvider;
+	styler?: ITreeStyler;
 }
 
 export interface ITreeOptions extends ITreeStyles {
@@ -673,6 +686,7 @@ export interface ITreeOptions extends ITreeStyles {
 	showTwistie?: boolean;
 	indentPixels?: number;
 	verticalScrollMode?: ScrollbarVisibility;
+	horizontalScrollMode?: ScrollbarVisibility;
 	alwaysFocused?: boolean;
 	autoExpandSingleChildren?: boolean;
 	useShadows?: boolean;
@@ -680,6 +694,11 @@ export interface ITreeOptions extends ITreeStyles {
 	ariaLabel?: string;
 	keyboardSupport?: boolean;
 	preventRootFocus?: boolean;
+	showLoading?: boolean;
+}
+
+export interface ITreeStyler {
+	style(styles: ITreeStyles): void;
 }
 
 export interface ITreeStyles {
@@ -712,7 +731,7 @@ export interface IActionProvider {
 	/**
 	 * Returns a promise of an array with the actions of the element that should show up in place right to the element in the tree.
 	 */
-	getActions(tree: ITree, element: any): WinJS.TPromise<IAction[]>;
+	getActions(tree: ITree, element: any): IAction[];
 
 	/**
 	 * Returns whether or not the element has secondary actions. These show up once the user has expanded the element's action bar.
@@ -722,7 +741,7 @@ export interface IActionProvider {
 	/**
 	 * Returns a promise of an array with the secondary actions of the element that should show up once the user has expanded the element's action bar.
 	 */
-	getSecondaryActions(tree: ITree, element: any): WinJS.TPromise<IAction[]>;
+	getSecondaryActions(tree: ITree, element: any): IAction[];
 
 	/**
 	 * Returns an action item to render an action.

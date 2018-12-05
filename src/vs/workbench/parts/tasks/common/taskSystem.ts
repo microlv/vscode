@@ -2,18 +2,17 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-'use strict';
 
+import { URI } from 'vs/base/common/uri';
 import Severity from 'vs/base/common/severity';
 import { TPromise } from 'vs/base/common/winjs.base';
 import { TerminateResponse } from 'vs/base/common/processes';
-import Event from 'vs/base/common/event';
-
+import { Event } from 'vs/base/common/event';
+import { Platform } from 'vs/base/common/platform';
 import { IWorkspaceFolder } from 'vs/platform/workspace/common/workspace';
+import { Task, TaskEvent, KeyedTaskIdentifier } from './tasks';
 
-import { Task, TaskEvent } from './tasks';
-
-export enum TaskErrors {
+export const enum TaskErrors {
 	NotConfigured,
 	RunningTask,
 	NoBuildTask,
@@ -42,8 +41,8 @@ export class TaskError {
 		"runner": { "classification": "SystemMetaData", "purpose": "FeatureInsight" },
 		"taskKind": { "classification": "SystemMetaData", "purpose": "FeatureInsight" },
 		"command": { "classification": "SystemMetaData", "purpose": "FeatureInsight" },
-		"success": { "classification": "SystemMetaData", "purpose": "FeatureInsight" },
-		"exitCode": { "classification": "SystemMetaData", "purpose": "FeatureInsight" }
+		"success": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true },
+		"exitCode": { "classification": "SystemMetaData", "purpose": "FeatureInsight", "isMeasurement": true }
 	}
 */
 export interface TelemetryEvent {
@@ -76,7 +75,7 @@ export interface ITaskSummary {
 	exitCode?: number;
 }
 
-export enum TaskExecuteKind {
+export const enum TaskExecuteKind {
 	Started = 1,
 	Active = 2
 }
@@ -84,6 +83,7 @@ export enum TaskExecuteKind {
 export interface ITaskExecuteResult {
 	kind: TaskExecuteKind;
 	promise: TPromise<ITaskSummary>;
+	task: Task;
 	started?: {
 		restartOnFileChanges?: string;
 	};
@@ -94,16 +94,42 @@ export interface ITaskExecuteResult {
 }
 
 export interface ITaskResolver {
-	resolve(workspaceFolder: IWorkspaceFolder, identifier: string): Task;
+	resolve(workspaceFolder: IWorkspaceFolder, identifier: string | KeyedTaskIdentifier): Task;
 }
 
 export interface TaskTerminateResponse extends TerminateResponse {
 	task: Task | undefined;
 }
 
+export interface ResolveSet {
+	process?: {
+		name: string;
+		cwd?: string;
+		path?: string;
+	};
+	variables: Set<string>;
+}
+
+export interface ResolvedVariables {
+	process?: string;
+	variables: Map<string, string>;
+}
+
+export interface TaskSystemInfo {
+	platform: Platform;
+	context: any;
+	uriProvider: (this: void, path: string) => URI;
+	resolveVariables(workspaceFolder: IWorkspaceFolder, toResolve: ResolveSet): Promise<ResolvedVariables>;
+}
+
+export interface TaskSystemInfoResovler {
+	(workspaceFolder: IWorkspaceFolder): TaskSystemInfo;
+}
+
 export interface ITaskSystem {
 	onDidStateChange: Event<TaskEvent>;
 	run(task: Task, resolver: ITaskResolver): ITaskExecuteResult;
+	rerun(): ITaskExecuteResult | undefined;
 	isActive(): TPromise<boolean>;
 	isActiveSync(): boolean;
 	getActiveTasks(): Task[];

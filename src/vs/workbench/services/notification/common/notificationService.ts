@@ -3,32 +3,22 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-'use strict';
+import { INotificationService, INotification, INotificationHandle, Severity, NotificationMessage, INotificationActions, IPromptChoice, IPromptOptions } from 'vs/platform/notification/common/notification';
+import { INotificationsModel, NotificationsModel, ChoiceAction } from 'vs/workbench/common/notifications';
+import { dispose, Disposable, IDisposable } from 'vs/base/common/lifecycle';
+import { once } from 'vs/base/common/event';
 
-import { INotificationService, INotification, INotificationHandle, Severity, NotificationMessage } from 'vs/platform/notification/common/notification';
-import { INotificationsModel, NotificationsModel } from 'vs/workbench/common/notifications';
-import { IDisposable, dispose } from 'vs/base/common/lifecycle';
+export class NotificationService extends Disposable implements INotificationService {
 
-export class NotificationService implements INotificationService {
+	_serviceBrand: any;
 
-	public _serviceBrand: any;
+	private _model: INotificationsModel = this._register(new NotificationsModel());
 
-	private _model: INotificationsModel;
-	private toDispose: IDisposable[];
-
-	constructor() {
-		this.toDispose = [];
-
-		const model = new NotificationsModel();
-		this.toDispose.push(model);
-		this._model = model;
-	}
-
-	public get model(): INotificationsModel {
+	get model(): INotificationsModel {
 		return this._model;
 	}
 
-	public info(message: NotificationMessage | NotificationMessage[]): void {
+	info(message: NotificationMessage | NotificationMessage[]): void {
 		if (Array.isArray(message)) {
 			message.forEach(m => this.info(m));
 
@@ -38,7 +28,7 @@ export class NotificationService implements INotificationService {
 		this.model.notify({ severity: Severity.Info, message });
 	}
 
-	public warn(message: NotificationMessage | NotificationMessage[]): void {
+	warn(message: NotificationMessage | NotificationMessage[]): void {
 		if (Array.isArray(message)) {
 			message.forEach(m => this.warn(m));
 
@@ -48,7 +38,7 @@ export class NotificationService implements INotificationService {
 		this.model.notify({ severity: Severity.Warning, message });
 	}
 
-	public error(message: NotificationMessage | NotificationMessage[]): void {
+	error(message: NotificationMessage | NotificationMessage[]): void {
 		if (Array.isArray(message)) {
 			message.forEach(m => this.error(m));
 
@@ -58,11 +48,59 @@ export class NotificationService implements INotificationService {
 		this.model.notify({ severity: Severity.Error, message });
 	}
 
-	public notify(notification: INotification): INotificationHandle {
+	notify(notification: INotification): INotificationHandle {
 		return this.model.notify(notification);
 	}
 
-	public dispose(): void {
-		this.toDispose = dispose(this.toDispose);
+	prompt(severity: Severity, message: string, choices: IPromptChoice[], options?: IPromptOptions): INotificationHandle {
+		const toDispose: IDisposable[] = [];
+
+		let choiceClicked = false;
+		let handle: INotificationHandle;
+
+		// Convert choices into primary/secondary actions
+		const actions: INotificationActions = { primary: [], secondary: [] };
+		choices.forEach((choice, index) => {
+			const action = new ChoiceAction(`workbench.dialog.choice.${index}`, choice);
+			if (!choice.isSecondary) {
+				if (!actions.primary) {
+					actions.primary = [];
+				}
+				actions.primary.push(action);
+			} else {
+				if (!actions.secondary) {
+					actions.secondary = [];
+				}
+				actions.secondary.push(action);
+			}
+
+			// React to action being clicked
+			toDispose.push(action.onDidRun(() => {
+				choiceClicked = true;
+
+				// Close notification unless we are told to keep open
+				if (!choice.keepOpen) {
+					handle.close();
+				}
+			}));
+
+			toDispose.push(action);
+		});
+
+		// Show notification with actions
+		handle = this.notify({ severity, message, actions, sticky: options && options.sticky, silent: options && options.silent });
+
+		once(handle.onDidClose)(() => {
+
+			// Cleanup when notification gets disposed
+			dispose(toDispose);
+
+			// Indicate cancellation to the outside if no action was executed
+			if (options && typeof options.onCancel === 'function' && !choiceClicked) {
+				options.onCancel();
+			}
+		});
+
+		return handle;
 	}
 }

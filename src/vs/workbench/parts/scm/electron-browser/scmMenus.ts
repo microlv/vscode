@@ -3,18 +3,21 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-'use strict';
-
 import 'vs/css!./media/scmViewlet';
-import Event, { Emitter } from 'vs/base/common/event';
+import { Event, Emitter } from 'vs/base/common/event';
 import { IDisposable, dispose } from 'vs/base/common/lifecycle';
 import { IContextKeyService } from 'vs/platform/contextkey/common/contextkey';
 import { IMenuService, MenuId, IMenu } from 'vs/platform/actions/common/actions';
 import { IAction } from 'vs/base/common/actions';
-import { fillInActions } from 'vs/platform/actions/browser/menuItemActionItem';
+import { fillInContextMenuActions, fillInActionBarActions } from 'vs/platform/actions/browser/menuItemActionItem';
 import { ISCMProvider, ISCMResource, ISCMResourceGroup } from 'vs/workbench/services/scm/common/scm';
 import { getSCMResourceContextKey } from './scmUtil';
 import { IContextMenuService } from 'vs/platform/contextview/browser/contextView';
+import { equals } from 'vs/base/common/arrays';
+
+function actionEquals(a: IAction, b: IAction): boolean {
+	return a.id === b.id;
+}
 
 export class SCMMenus implements IDisposable {
 
@@ -51,10 +54,18 @@ export class SCMMenus implements IDisposable {
 	}
 
 	private updateTitleActions(): void {
-		this.titleActions = [];
-		this.titleSecondaryActions = [];
-		// TODO@joao: second arg used to be null
-		fillInActions(this.titleMenu, { shouldForwardArgs: true }, { primary: this.titleActions, secondary: this.titleSecondaryActions }, this.contextMenuService);
+		const primary: IAction[] = [];
+		const secondary: IAction[] = [];
+
+		fillInActionBarActions(this.titleMenu, { shouldForwardArgs: true }, { primary, secondary });
+
+		if (equals(primary, this.titleActions, actionEquals) && equals(secondary, this.titleSecondaryActions, actionEquals)) {
+			return;
+		}
+
+		this.titleActions = primary;
+		this.titleSecondaryActions = secondary;
+
 		this._onDidChangeTitle.fire();
 	}
 
@@ -90,7 +101,7 @@ export class SCMMenus implements IDisposable {
 		const primary: IAction[] = [];
 		const secondary: IAction[] = [];
 		const result = { primary, secondary };
-		fillInActions(menu, { shouldForwardArgs: true }, result, this.contextMenuService, g => /^inline/.test(g));
+		fillInContextMenuActions(menu, { shouldForwardArgs: true }, result, this.contextMenuService, g => /^inline/.test(g));
 
 		menu.dispose();
 		contextKeyService.dispose();

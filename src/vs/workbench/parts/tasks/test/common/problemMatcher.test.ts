@@ -2,11 +2,9 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-'use strict';
-
 import * as matchers from 'vs/workbench/parts/tasks/common/problemMatcher';
 
-import assert = require('assert');
+import * as assert from 'assert';
 import { ValidationState, IProblemReporter, ValidationStatus } from 'vs/base/common/parsers';
 
 class ProblemReporter implements IProblemReporter {

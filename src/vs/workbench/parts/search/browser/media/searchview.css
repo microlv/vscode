@@ -29,9 +29,27 @@
 	margin-left: 17px;
 }
 
-.search-view .search-widget .input-box,
-.search-view .search-widget .input-box .monaco-inputbox {
-	height: 25px;
+.search-view .search-widget .monaco-inputbox > .wrapper {
+	height: 100%;
+}
+
+.search-view .search-widget .monaco-inputbox > .wrapper > .mirror,
+.search-view .search-widget .monaco-inputbox > .wrapper > textarea.input {
+	padding: 3px;
+	padding-left: 4px;
+}
+
+.search-view .search-widget .monaco-inputbox > .wrapper > .mirror {
+	max-height: 134px;
+}
+
+.search-view .search-widget .monaco-inputbox > .wrapper > textarea.input {
+	overflow: initial;
+	height: 24px; /* set initial height before measure */
+}
+
+.search-view .monaco-inputbox > .wrapper > textarea.input::-webkit-scrollbar {
+	display: none;
 }
 
 .search-view .search-widget .monaco-findInput {
@@ -51,6 +69,10 @@
 
 .search-view .search-widget .replace-container .monaco-action-bar {
 	margin-left: 3px;
+}
+
+.search-view .search-widget .replace-container .monaco-action-bar {
+	height: 25px;
 }
 
 .search-view .search-widget .replace-container .monaco-action-bar .action-item .icon {
@@ -175,8 +197,15 @@
 	padding: 0;
 }
 
-.search-view .foldermatch .monaco-icon-label,
-.search-view .filematch .monaco-icon-label {
+.search-view:not(.wide) .foldermatch .monaco-icon-label,
+.search-view:not(.wide) .filematch .monaco-icon-label {
+	flex: 1;
+}
+
+.search-view:not(.wide) .monaco-tree .monaco-tree-row:hover:not(.highlighted) .foldermatch .monaco-icon-label,
+.search-view:not(.wide) .monaco-tree .monaco-tree-row.focused .foldermatch .monaco-icon-label,
+.search-view:not(.wide) .monaco-tree .monaco-tree-row:hover:not(.highlighted) .filematch .monaco-icon-label,
+.search-view:not(.wide) .monaco-tree .monaco-tree-row.focused .filematch .monaco-icon-label {
 	flex: 1;
 }
 
@@ -187,6 +216,11 @@
 	margin-left: 0.8em;
 }
 
+.search-view.wide .foldermatch .badge,
+.search-view.wide .filematch .badge {
+	margin-left: 10px;
+}
+
 .search-view .linematch {
 	position: relative;
 	line-height: 22px;
@@ -194,9 +228,20 @@
 }
 
 .search-view .linematch > .match {
-	flex: 1;
 	overflow: hidden;
 	text-overflow: ellipsis;
+}
+
+.search-view .linematch .matchLineNum {
+	margin-left: 7px;
+	margin-right: 4px;
+	opacity: .7;
+	font-size: 0.9em;
+	display: none;
+}
+
+.search-view .linematch .matchLineNum.show {
+	display: block;
 }
 
 .search-view .linematch.changedOrRemoved {
@@ -217,15 +262,17 @@
 	margin: 0;
 }
 
-.search-view .monaco-tree .monaco-tree-row.focused .monaco-action-bar {
-	width: 0; /* in order to support a11y with keyboard, we use width: 0 to hide the actions, which still allows to "Tab" into the actions */
-	display: block;
-}
-
 .search-view .monaco-tree .monaco-tree-row:hover:not(.highlighted) .monaco-action-bar,
 .search-view .monaco-tree .monaco-tree-row.focused .monaco-action-bar {
-	width: inherit;
-	display: block;
+	display: inline-block;
+}
+
+.search-view:not(.wide) .monaco-tree .monaco-tree-row .linematch .actionBarContainer {
+	flex: 1;
+}
+
+.search-view:not(.wide) .monaco-tree .monaco-tree-row .monaco-action-bar {
+	float: right;
 }
 
 .search-view .monaco-tree .monaco-tree-row .monaco-action-bar .action-label {
@@ -234,6 +281,11 @@
 	background-repeat: no-repeat;
 	width: 16px;
 	height: 16px;
+}
+
+/* Adjusts spacing in high contrast mode so that actions are vertically centered */
+.hc-black .monaco-tree .monaco-tree-row .monaco-action-bar .action-label {
+	margin-top: 2px;
 }
 
 .search-view .action-remove {
@@ -269,9 +321,9 @@
 .search-view > .results > .monaco-tree .monaco-tree-row:hover .content .filematch .monaco-count-badge,
 .search-view > .results > .monaco-tree .monaco-tree-row:hover .content .foldermatch .monaco-count-badge,
 .search-view > .results > .monaco-tree .monaco-tree-row:hover .content .linematch .monaco-count-badge,
-.search-view > .results > .monaco-tree.focused .monaco-tree-row.focused .content .filematch .monaco-count-badge,
-.search-view > .results > .monaco-tree.focused .monaco-tree-row.focused .content .foldermatch .monaco-count-badge,
-.search-view > .results > .monaco-tree.focused .monaco-tree-row.focused .content .linematch .monaco-count-badge {
+.search-view > .results > .monaco-tree .monaco-tree-row.focused .content .filematch .monaco-count-badge,
+.search-view > .results > .monaco-tree .monaco-tree-row.focused .content .foldermatch .monaco-count-badge,
+.search-view > .results > .monaco-tree .monaco-tree-row.focused .content .linematch .monaco-count-badge {
 	display: none;
 }
 
@@ -355,11 +407,11 @@
 
 /* Theming */
 
-.vs .viewlet .search-view .search-widget .toggle-replace-button:hover {
+.vs .search-view .search-widget .toggle-replace-button:hover {
 	background-color: rgba(0, 0, 0, 0.1) !important;
 }
 
-.vs-dark .viewlet .search-view .search-widget .toggle-replace-button:hover {
+.vs-dark .search-view .search-widget .toggle-replace-button:hover {
 	background-color: rgba(255, 255, 255, 0.1) !important;
 }
 

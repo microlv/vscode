@@ -2,53 +2,103 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-'use strict';
 
-import URI, { UriComponents } from 'vs/base/common/uri';
-import { TPromise } from 'vs/base/common/winjs.base';
-import { MainContext, IMainContext, ExtHostFileSystemShape, MainThreadFileSystemShape } from './extHost.protocol';
+import { URI, UriComponents } from 'vs/base/common/uri';
+import { MainContext, IMainContext, ExtHostFileSystemShape, MainThreadFileSystemShape, IFileChangeDto } from './extHost.protocol';
 import * as vscode from 'vscode';
-import { IStat } from 'vs/platform/files/common/files';
-import { IDisposable } from 'vs/base/common/lifecycle';
-import { asWinJsPromise } from 'vs/base/common/async';
-import { IPatternInfo } from 'vs/platform/search/common/search';
-import { values } from 'vs/base/common/map';
-import { Range } from 'vs/workbench/api/node/extHostTypes';
+import * as files from 'vs/platform/files/common/files';
+import { IDisposable, toDisposable, dispose } from 'vs/base/common/lifecycle';
+import { FileChangeType, DocumentLink } from 'vs/workbench/api/node/extHostTypes';
+import * as typeConverter from 'vs/workbench/api/node/extHostTypeConverters';
 import { ExtHostLanguageFeatures } from 'vs/workbench/api/node/extHostLanguageFeatures';
+import { Schemas } from 'vs/base/common/network';
+import { LabelRules } from 'vs/platform/label/common/label';
+import { State, StateMachine, LinkComputer } from 'vs/editor/common/modes/linkComputer';
+import { commonPrefixLength } from 'vs/base/common/strings';
+import { CharCode } from 'vs/base/common/charCode';
 
-class FsLinkProvider implements vscode.DocumentLinkProvider {
+class FsLinkProvider {
 
-	private _schemes = new Set<string>();
-	private _regex: RegExp;
+	private _schemes: string[] = [];
+	private _stateMachine: StateMachine;
 
 	add(scheme: string): void {
-		this._regex = undefined;
-		this._schemes.add(scheme);
+		this._stateMachine = undefined;
+		this._schemes.push(scheme);
 	}
 
 	delete(scheme: string): void {
-		if (this._schemes.delete(scheme)) {
-			this._regex = undefined;
+		let idx = this._schemes.indexOf(scheme);
+		if (idx >= 0) {
+			this._schemes.splice(idx, 1);
+			this._stateMachine = undefined;
 		}
 	}
 
-	provideDocumentLinks(document: vscode.TextDocument, token: vscode.CancellationToken): vscode.ProviderResult<vscode.DocumentLink[]> {
-		if (this._schemes.size === 0) {
-			return undefined;
+	private _initStateMachine(): void {
+		if (!this._stateMachine) {
+
+			// sort and compute common prefix with previous scheme
+			// then build state transitions based on the data
+			const schemes = this._schemes.sort();
+			const edges = [];
+			let prevScheme: string;
+			let prevState: State;
+			let nextState = State.LastKnownState;
+			for (const scheme of schemes) {
+
+				// skip the common prefix of the prev scheme
+				// and continue with its last state
+				let pos = !prevScheme ? 0 : commonPrefixLength(prevScheme, scheme);
+				if (pos === 0) {
+					prevState = State.Start;
+				} else {
+					prevState = nextState;
+				}
+
+				for (; pos < scheme.length; pos++) {
+					// keep creating new (next) states until the
+					// end (and the BeforeColon-state) is reached
+					if (pos + 1 === scheme.length) {
+						nextState = State.BeforeColon;
+					} else {
+						nextState += 1;
+					}
+					edges.push([prevState, scheme.toUpperCase().charCodeAt(pos), nextState]);
+					edges.push([prevState, scheme.toLowerCase().charCodeAt(pos), nextState]);
+					prevState = nextState;
+				}
+
+				prevScheme = scheme;
+			}
+
+			// all link must match this pattern `<scheme>:/<more>`
+			edges.push([State.BeforeColon, CharCode.Colon, State.AfterColon]);
+			edges.push([State.AfterColon, CharCode.Slash, State.End]);
+
+			this._stateMachine = new StateMachine(edges);
 		}
-		if (!this._regex) {
-			this._regex = new RegExp(`(${(values(this._schemes).join('|'))}):[^\\s]+`, 'gi');
-		}
-		let result: vscode.DocumentLink[] = [];
-		let max = Math.min(document.lineCount, 2500);
-		for (let line = 0; line < max; line++) {
-			this._regex.lastIndex = 0;
-			let textLine = document.lineAt(line);
-			let m: RegExpMatchArray;
-			while (m = this._regex.exec(textLine.text)) {
-				const target = URI.parse(m[0]);
-				const range = new Range(line, this._regex.lastIndex - m[0].length, line, this._regex.lastIndex);
-				result.push({ target, range });
+	}
+
+	provideDocumentLinks(document: vscode.TextDocument): vscode.ProviderResult<vscode.DocumentLink[]> {
+		this._initStateMachine();
+
+		const result: vscode.DocumentLink[] = [];
+		const links = LinkComputer.computeLinks({
+			getLineContent(lineNumber: number): string {
+				return document.lineAt(lineNumber - 1).text;
+			},
+			getLineCount(): number {
+				return document.lineCount;
+			}
+		}, this._stateMachine);
+
+		for (const link of links) {
+			try {
+				let uri = URI.parse(link.url, true);
+				result.push(new DocumentLink(typeConverter.Range.to(link.range), uri));
+			} catch (err) {
+				// ignore
 			}
 		}
 		return result;
@@ -58,99 +108,195 @@ class FsLinkProvider implements vscode.DocumentLinkProvider {
 export class ExtHostFileSystem implements ExtHostFileSystemShape {
 
 	private readonly _proxy: MainThreadFileSystemShape;
-	private readonly _provider = new Map<number, vscode.FileSystemProvider>();
 	private readonly _linkProvider = new FsLinkProvider();
+	private readonly _fsProvider = new Map<number, vscode.FileSystemProvider>();
+	private readonly _usedSchemes = new Set<string>();
+	private readonly _watches = new Map<number, IDisposable>();
 
+	private _linkProviderRegistration: IDisposable;
 	private _handlePool: number = 0;
 
-	constructor(mainContext: IMainContext, extHostLanguageFeatures: ExtHostLanguageFeatures) {
+	constructor(mainContext: IMainContext, private _extHostLanguageFeatures: ExtHostLanguageFeatures) {
 		this._proxy = mainContext.getProxy(MainContext.MainThreadFileSystem);
-		extHostLanguageFeatures.registerDocumentLinkProvider('*', this._linkProvider);
+		this._usedSchemes.add(Schemas.file);
+		this._usedSchemes.add(Schemas.untitled);
+		this._usedSchemes.add(Schemas.vscode);
+		this._usedSchemes.add(Schemas.inMemory);
+		this._usedSchemes.add(Schemas.internal);
+		this._usedSchemes.add(Schemas.http);
+		this._usedSchemes.add(Schemas.https);
+		this._usedSchemes.add(Schemas.mailto);
+		this._usedSchemes.add(Schemas.data);
 	}
 
-	registerFileSystemProvider(scheme: string, provider: vscode.FileSystemProvider) {
+	dispose(): void {
+		dispose(this._linkProviderRegistration);
+	}
+
+	private _registerLinkProviderIfNotYetRegistered(): void {
+		if (!this._linkProviderRegistration) {
+			this._linkProviderRegistration = this._extHostLanguageFeatures.registerDocumentLinkProvider(undefined, '*', this._linkProvider);
+		}
+	}
+
+	registerFileSystemProvider(scheme: string, provider: vscode.FileSystemProvider, options: { isCaseSensitive?: boolean, isReadonly?: boolean } = {}) {
+
+		if (this._usedSchemes.has(scheme)) {
+			throw new Error(`a provider for the scheme '${scheme}' is already registered`);
+		}
+
+		//
+		this._registerLinkProviderIfNotYetRegistered();
+
 		const handle = this._handlePool++;
 		this._linkProvider.add(scheme);
-		this._provider.set(handle, provider);
-		this._proxy.$registerFileSystemProvider(handle, scheme);
-		if (provider.root) {
-			// todo@remote
-			this._proxy.$onDidAddFileSystemRoot(provider.root);
+		this._usedSchemes.add(scheme);
+		this._fsProvider.set(handle, provider);
+
+		let capabilites = files.FileSystemProviderCapabilities.FileReadWrite;
+		if (options.isCaseSensitive) {
+			capabilites += files.FileSystemProviderCapabilities.PathCaseSensitive;
 		}
-		let reg: IDisposable;
-		if (provider.onDidChange) {
-			reg = provider.onDidChange(event => this._proxy.$onFileSystemChange(handle, <any>event));
+		if (options.isReadonly) {
+			capabilites += files.FileSystemProviderCapabilities.Readonly;
 		}
-		return {
-			dispose: () => {
-				if (reg) {
-					reg.dispose();
+		if (typeof provider.copy === 'function') {
+			capabilites += files.FileSystemProviderCapabilities.FileFolderCopy;
+		}
+		if (typeof provider.open === 'function' && typeof provider.close === 'function'
+			&& typeof provider.read === 'function' && typeof provider.write === 'function'
+		) {
+			capabilites += files.FileSystemProviderCapabilities.FileOpenReadWriteClose;
+		}
+
+		this._proxy.$registerFileSystemProvider(handle, scheme, capabilites);
+
+		const subscription = provider.onDidChangeFile(event => {
+			let mapped: IFileChangeDto[] = [];
+			for (const e of event) {
+				let { uri: resource, type } = e;
+				if (resource.scheme !== scheme) {
+					// dropping events for wrong scheme
+					continue;
 				}
-				this._linkProvider.delete(scheme);
-				this._provider.delete(handle);
-				this._proxy.$unregisterFileSystemProvider(handle);
+				let newType: files.FileChangeType;
+				switch (type) {
+					case FileChangeType.Changed:
+						newType = files.FileChangeType.UPDATED;
+						break;
+					case FileChangeType.Created:
+						newType = files.FileChangeType.ADDED;
+						break;
+					case FileChangeType.Deleted:
+						newType = files.FileChangeType.DELETED;
+						break;
+				}
+				mapped.push({ resource, type: newType });
 			}
-		};
+			this._proxy.$onFileSystemChange(handle, mapped);
+		});
+
+		return toDisposable(() => {
+			subscription.dispose();
+			this._linkProvider.delete(scheme);
+			this._usedSchemes.delete(scheme);
+			this._fsProvider.delete(handle);
+			this._proxy.$unregisterProvider(handle);
+		});
 	}
 
-	$utimes(handle: number, resource: UriComponents, mtime: number, atime: number): TPromise<IStat, any> {
-		return asWinJsPromise(token => this._provider.get(handle).utimes(URI.revive(resource), mtime, atime));
+	setUriFormatter(scheme: string, formatter: LabelRules): void {
+		this._proxy.$setUriFormatter(scheme, formatter);
 	}
-	$stat(handle: number, resource: UriComponents): TPromise<IStat, any> {
-		return asWinJsPromise(token => this._provider.get(handle).stat(URI.revive(resource)));
+
+	private static _asIStat(stat: vscode.FileStat): files.IStat {
+		const { type, ctime, mtime, size } = stat;
+		return { type, ctime, mtime, size };
 	}
-	$read(handle: number, session: number, offset: number, count: number, resource: UriComponents): TPromise<number> {
-		const progress = {
-			report: chunk => {
-				this._proxy.$reportFileChunk(handle, session, [].slice.call(chunk));
-			}
-		};
-		return asWinJsPromise(token => this._provider.get(handle).read(URI.revive(resource), offset, count, progress));
-	}
-	$write(handle: number, resource: UriComponents, content: number[]): TPromise<void, any> {
-		return asWinJsPromise(token => this._provider.get(handle).write(URI.revive(resource), Buffer.from(content)));
-	}
-	$unlink(handle: number, resource: UriComponents): TPromise<void, any> {
-		return asWinJsPromise(token => this._provider.get(handle).unlink(URI.revive(resource)));
-	}
-	$move(handle: number, resource: UriComponents, target: UriComponents): TPromise<IStat, any> {
-		return asWinJsPromise(token => this._provider.get(handle).move(URI.revive(resource), URI.revive(target)));
-	}
-	$mkdir(handle: number, resource: UriComponents): TPromise<IStat, any> {
-		return asWinJsPromise(token => this._provider.get(handle).mkdir(URI.revive(resource)));
-	}
-	$readdir(handle: number, resource: UriComponents): TPromise<[UriComponents, IStat][], any> {
-		return asWinJsPromise(token => this._provider.get(handle).readdir(URI.revive(resource)));
-	}
-	$rmdir(handle: number, resource: UriComponents): TPromise<void, any> {
-		return asWinJsPromise(token => this._provider.get(handle).rmdir(URI.revive(resource)));
-	}
-	$findFiles(handle: number, session: number, query: string): TPromise<void> {
-		const provider = this._provider.get(handle);
-		if (!provider.findFiles) {
-			return TPromise.as(undefined);
+
+	private _checkProviderExists(handle: number): void {
+		if (!this._fsProvider.has(handle)) {
+			const err = new Error();
+			err.name = 'ENOPRO';
+			err.message = `no provider`;
+			throw err;
 		}
-		const progress = {
-			report: (uri) => {
-				this._proxy.$handleFindMatch(handle, session, uri);
-			}
-		};
-		return asWinJsPromise(token => provider.findFiles(query, progress, token));
 	}
-	$provideTextSearchResults(handle: number, session: number, pattern: IPatternInfo, options: { includes: string[], excludes: string[] }): TPromise<void> {
-		const provider = this._provider.get(handle);
-		if (!provider.provideTextSearchResults) {
-			return TPromise.as(undefined);
+
+	$stat(handle: number, resource: UriComponents): Promise<files.IStat> {
+		this._checkProviderExists(handle);
+		return Promise.resolve(this._fsProvider.get(handle).stat(URI.revive(resource))).then(ExtHostFileSystem._asIStat);
+	}
+
+	$readdir(handle: number, resource: UriComponents): Promise<[string, files.FileType][]> {
+		this._checkProviderExists(handle);
+		return Promise.resolve(this._fsProvider.get(handle).readDirectory(URI.revive(resource)));
+	}
+
+	$readFile(handle: number, resource: UriComponents): Promise<Buffer> {
+		this._checkProviderExists(handle);
+		return Promise.resolve(this._fsProvider.get(handle).readFile(URI.revive(resource))).then(data => {
+			return Buffer.isBuffer(data) ? data : Buffer.from(data.buffer, data.byteOffset, data.byteLength);
+		});
+	}
+
+	$writeFile(handle: number, resource: UriComponents, content: Buffer, opts: files.FileWriteOptions): Promise<void> {
+		this._checkProviderExists(handle);
+		return Promise.resolve(this._fsProvider.get(handle).writeFile(URI.revive(resource), content, opts));
+	}
+
+	$delete(handle: number, resource: UriComponents, opts: files.FileDeleteOptions): Promise<void> {
+		this._checkProviderExists(handle);
+		return Promise.resolve(this._fsProvider.get(handle).delete(URI.revive(resource), opts));
+	}
+
+	$rename(handle: number, oldUri: UriComponents, newUri: UriComponents, opts: files.FileOverwriteOptions): Promise<void> {
+		this._checkProviderExists(handle);
+		return Promise.resolve(this._fsProvider.get(handle).rename(URI.revive(oldUri), URI.revive(newUri), opts));
+	}
+
+	$copy(handle: number, oldUri: UriComponents, newUri: UriComponents, opts: files.FileOverwriteOptions): Promise<void> {
+		this._checkProviderExists(handle);
+		return Promise.resolve(this._fsProvider.get(handle).copy(URI.revive(oldUri), URI.revive(newUri), opts));
+	}
+
+	$mkdir(handle: number, resource: UriComponents): Promise<void> {
+		this._checkProviderExists(handle);
+		return Promise.resolve(this._fsProvider.get(handle).createDirectory(URI.revive(resource)));
+	}
+
+	$watch(handle: number, session: number, resource: UriComponents, opts: files.IWatchOptions): void {
+		this._checkProviderExists(handle);
+		let subscription = this._fsProvider.get(handle).watch(URI.revive(resource), opts);
+		this._watches.set(session, subscription);
+	}
+
+	$unwatch(session: number): void {
+		let subscription = this._watches.get(session);
+		if (subscription) {
+			subscription.dispose();
+			this._watches.delete(session);
 		}
-		const progress = {
-			report: (data: vscode.TextSearchResult) => {
-				this._proxy.$handleFindMatch(handle, session, [data.uri, {
-					lineNumber: 1 + data.range.start.line,
-					preview: data.preview.leading + data.preview.matching + data.preview.trailing,
-					offsetAndLengths: [[data.preview.leading.length, data.preview.matching.length]]
-				}]);
-			}
-		};
-		return asWinJsPromise(token => provider.provideTextSearchResults(pattern, options, progress, token));
 	}
+
+	$open(handle: number, resource: UriComponents): Promise<number> {
+		this._checkProviderExists(handle);
+		return Promise.resolve(this._fsProvider.get(handle).open(URI.revive(resource)));
+	}
+
+	$close(handle: number, fd: number): Promise<void> {
+		this._checkProviderExists(handle);
+		return Promise.resolve(this._fsProvider.get(handle).close(fd));
+	}
+
+	$read(handle: number, fd: number, pos: number, data: Buffer, offset: number, length: number): Promise<number> {
+		this._checkProviderExists(handle);
+		return Promise.resolve(this._fsProvider.get(handle).read(fd, pos, data, offset, length));
+	}
+
+	$write(handle: number, fd: number, pos: number, data: Buffer, offset: number, length: number): Promise<number> {
+		this._checkProviderExists(handle);
+		return Promise.resolve(this._fsProvider.get(handle).write(fd, pos, data, offset, length));
+	}
+
 }

@@ -2,8 +2,6 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-'use strict';
-
 
 /**
  * An interface for a JavaScript object that
@@ -47,6 +45,15 @@ export function size<T>(from: IStringDictionary<T> | INumberDictionary<T>): numb
 	return count;
 }
 
+export function first<T>(from: IStringDictionary<T> | INumberDictionary<T>): T | undefined {
+	for (let key in from) {
+		if (hasOwnProperty.call(from, key)) {
+			return from[key];
+		}
+	}
+	return undefined;
+}
+
 /**
  * Iterates over each entry in the provided set. The iterator allows
  * to remove elements and will stop when the callback returns {{false}}.
@@ -65,18 +72,6 @@ export function forEach<T>(from: IStringDictionary<T> | INumberDictionary<T>, ca
 }
 
 /**
- * Removes an element from the dictionary. Returns {{false}} if the property
- * does not exists.
- */
-export function remove<T>(from: IStringDictionary<T> | INumberDictionary<T>, key: string): boolean {
-	if (!hasOwnProperty.call(from, key)) {
-		return false;
-	}
-	delete (from as any)[key];
-	return true;
-}
-
-/**
  * Groups the collection into a dictionary based on the provided
  * group function.
  */
@@ -89,6 +84,16 @@ export function groupBy<T>(data: T[], groupFn: (element: T) => string): IStringD
 			target = result[key] = [];
 		}
 		target.push(element);
+	}
+	return result;
+}
+
+export function fromMap<T>(original: Map<string, T>): IStringDictionary<T> {
+	const result: IStringDictionary<T> = Object.create(null);
+	if (original) {
+		original.forEach((value, key) => {
+			result[key] = value;
+		});
 	}
 	return result;
 }

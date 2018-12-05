@@ -3,12 +3,9 @@
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
 
-'use strict';
-
 import * as assert from 'assert';
 import 'vs/workbench/browser/parts/editor/editor.contribution'; // make sure to load all contributed editor things into tests
-import { Promise, TPromise } from 'vs/base/common/winjs.base';
-import Event from 'vs/base/common/event';
+import { Event } from 'vs/base/common/event';
 import { IQuickOpenService } from 'vs/platform/quickOpen/common/quickOpen';
 import { Registry } from 'vs/platform/registry/common/platform';
 import { QuickOpenHandlerDescriptor, IQuickOpenRegistry, Extensions as QuickOpenExtensions, QuickOpenAction, QuickOpenHandler } from 'vs/workbench/browser/quickopen';
@@ -22,14 +19,6 @@ export class TestQuickOpenService implements IQuickOpenService {
 		this.callback = callback;
 	}
 
-	pick(arg: any, options?: any, token?: any): Promise {
-		return TPromise.as(null);
-	}
-
-	input(options?: any, token?: any): Promise {
-		return TPromise.as(null);
-	}
-
 	accept(): void {
 	}
 
@@ -39,12 +28,12 @@ export class TestQuickOpenService implements IQuickOpenService {
 	close(): void {
 	}
 
-	show(prefix?: string, options?: any): Promise {
+	show(prefix?: string, options?: any): Thenable<void> {
 		if (this.callback) {
 			this.callback(prefix);
 		}
 
-		return TPromise.as(true);
+		return Promise.resolve();
 	}
 
 	get onShow(): Event<void> {
@@ -59,14 +48,12 @@ export class TestQuickOpenService implements IQuickOpenService {
 	public navigate(): void { }
 }
 
-suite('Workbench QuickOpen', () => {
+suite('QuickOpen', () => {
 
-	class TestHandler extends QuickOpenHandler {
-
-	}
+	class TestHandler extends QuickOpenHandler { }
 
 	test('QuickOpen Handler and Registry', () => {
-		let registry = (<IQuickOpenRegistry>Registry.as(QuickOpenExtensions.Quickopen));
+		let registry = (Registry.as<IQuickOpenRegistry>(QuickOpenExtensions.Quickopen));
 		let handler = new QuickOpenHandlerDescriptor(
 			TestHandler,
 			'testhandler',

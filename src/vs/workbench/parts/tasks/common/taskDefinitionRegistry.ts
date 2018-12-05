@@ -2,12 +2,10 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-'use strict';
 
 import * as nls from 'vs/nls';
 import { IJSONSchema, IJSONSchemaMap } from 'vs/base/common/jsonSchema';
 import { IStringDictionary } from 'vs/base/common/collections';
-import { TPromise } from 'vs/base/common/winjs.base';
 import * as Types from 'vs/base/common/types';
 import * as Objects from 'vs/base/common/objects';
 
@@ -22,7 +20,7 @@ const taskDefinitionSchema: IJSONSchema = {
 	properties: {
 		type: {
 			type: 'string',
-			description: nls.localize('TaskDefinition.description', 'The actual task type')
+			description: nls.localize('TaskDefinition.description', 'The actual task type. Please note that types starting with a \'$\' are reserved for internal usage.')
 		},
 		required: {
 			type: 'array',
@@ -47,7 +45,7 @@ namespace Configuration {
 		properties?: IJSONSchemaMap;
 	}
 
-	export function from(value: TaskDefinition, extensionId: string, messageCollector: ExtensionMessageCollector): Tasks.TaskDefinition {
+	export function from(value: TaskDefinition, extensionId: string, messageCollector: ExtensionMessageCollector): Tasks.TaskDefinition | undefined {
 		if (!value) {
 			return undefined;
 		}
@@ -64,7 +62,7 @@ namespace Configuration {
 				}
 			}
 		}
-		return { extensionId, taskType, required: required.length >= 0 ? required : undefined, properties: value.properties ? Objects.deepClone(value.properties) : undefined };
+		return { extensionId, taskType, required: required, properties: value.properties ? Objects.deepClone(value.properties) : {} };
 	}
 }
 
@@ -76,20 +74,22 @@ const taskDefinitionsExtPoint = ExtensionsRegistry.registerExtensionPoint<Config
 });
 
 export interface ITaskDefinitionRegistry {
-	onReady(): TPromise<void>;
+	onReady(): Promise<void>;
 
 	get(key: string): Tasks.TaskDefinition;
 	all(): Tasks.TaskDefinition[];
+	getJsonSchema(): IJSONSchema;
 }
 
 class TaskDefinitionRegistryImpl implements ITaskDefinitionRegistry {
 
 	private taskTypes: IStringDictionary<Tasks.TaskDefinition>;
-	private readyPromise: TPromise<void>;
+	private readyPromise: Promise<void>;
+	private _schema: IJSONSchema;
 
 	constructor() {
 		this.taskTypes = Object.create(null);
-		this.readyPromise = new TPromise<void>((resolve, reject) => {
+		this.readyPromise = new Promise<void>((resolve, reject) => {
 			taskDefinitionsExtPoint.setHandler((extensions) => {
 				try {
 					for (let extension of extensions) {
@@ -105,10 +105,10 @@ class TaskDefinitionRegistryImpl implements ITaskDefinitionRegistry {
 				}
 				resolve(undefined);
 			});
-		}, () => { });
+		});
 	}
 
-	public onReady(): TPromise<void> {
+	public onReady(): Promise<void> {
 		return this.readyPromise;
 	}
 
@@ -118,6 +118,33 @@ class TaskDefinitionRegistryImpl implements ITaskDefinitionRegistry {
 
 	public all(): Tasks.TaskDefinition[] {
 		return Object.keys(this.taskTypes).map(key => this.taskTypes[key]);
+	}
+
+	public getJsonSchema(): IJSONSchema {
+		if (this._schema === void 0) {
+			let schemas: IJSONSchema[] = [];
+			for (let definition of this.all()) {
+				let schema: IJSONSchema = {
+					type: 'object',
+					additionalProperties: false
+				};
+				if (definition.required.length > 0) {
+					schema.required = definition.required.slice(0);
+				}
+				if (definition.properties !== void 0) {
+					schema.properties = Objects.deepClone(definition.properties);
+				} else {
+					schema.properties = Object.create(null);
+				}
+				schema.properties!.type = {
+					type: 'string',
+					enum: [definition.taskType]
+				};
+				schemas.push(schema);
+			}
+			this._schema = { oneOf: schemas };
+		}
+		return this._schema;
 	}
 }
 

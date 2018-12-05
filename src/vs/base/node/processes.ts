@@ -2,22 +2,24 @@
  *  Copyright (c) Microsoft Corporation. All rights reserved.
  *  Licensed under the MIT License. See License.txt in the project root for license information.
  *--------------------------------------------------------------------------------------------*/
-'use strict';
 
-import path = require('path');
+import * as path from 'path';
+import * as fs from 'fs';
 import * as cp from 'child_process';
-import { fork } from 'vs/base/node/stdFork';
-import nls = require('vs/nls');
-import { PPromise, TPromise, TValueCallback, TProgressCallback, ErrorCallback } from 'vs/base/common/winjs.base';
+import * as nls from 'vs/nls';
 import * as Types from 'vs/base/common/types';
 import { IStringDictionary } from 'vs/base/common/collections';
-import URI from 'vs/base/common/uri';
 import * as Objects from 'vs/base/common/objects';
 import * as TPath from 'vs/base/common/paths';
 import * as Platform from 'vs/base/common/platform';
 import { LineDecoder } from 'vs/base/node/decoder';
 import { CommandOptions, ForkOptions, SuccessData, Source, TerminateResponse, TerminateResponseCode, Executable } from 'vs/base/common/processes';
+import { getPathFromAmdModule } from 'vs/base/common/amd';
 export { CommandOptions, ForkOptions, SuccessData, Source, TerminateResponse, TerminateResponseCode };
+
+export type ValueCallback<T> = (value?: T | Thenable<T>) => void;
+export type ErrorCallback = (error?: any) => void;
+export type ProgressCallback<T> = (progress: T) => void;
 
 export interface LineData {
 	line: string;
@@ -52,7 +54,7 @@ export function terminateProcess(process: cp.ChildProcess, cwd?: string): Termin
 		}
 	} else if (Platform.isLinux || Platform.isMacintosh) {
 		try {
-			let cmd = URI.parse(require.toUrl('vs/base/node/terminateProcess.sh')).fsPath;
+			let cmd = getPathFromAmdModule(require, 'vs/base/node/terminateProcess.sh');
 			let result = cp.spawnSync(cmd, [process.pid.toString()]);
 			if (result.error) {
 				return { success: false, error: result.error };
@@ -72,13 +74,13 @@ export function getWindowsShell(): string {
 
 export abstract class AbstractProcess<TProgressData> {
 	private cmd: string;
-	private module: string;
 	private args: string[];
 	private options: CommandOptions | ForkOptions;
 	protected shell: boolean;
 
-	private childProcess: cp.ChildProcess;
-	protected childProcessPromise: TPromise<cp.ChildProcess>;
+	private childProcess: cp.ChildProcess | null;
+	protected childProcessPromise: Promise<cp.ChildProcess> | null;
+	private pidResolve?: ValueCallback<number>;
 	protected terminateRequested: boolean;
 
 	private static WellKnowCommands: IStringDictionary<boolean> = {
@@ -103,19 +105,13 @@ export abstract class AbstractProcess<TProgressData> {
 	};
 
 	public constructor(executable: Executable);
-	public constructor(cmd: string, args: string[], shell: boolean, options: CommandOptions);
-	public constructor(module: string, args: string[], options: ForkOptions);
-	public constructor(arg1: string | Executable, arg2?: string[], arg3?: boolean | ForkOptions, arg4?: CommandOptions) {
-		if (arg4) {
+	public constructor(cmd: string, args: string[] | undefined, shell: boolean, options: CommandOptions | undefined);
+	public constructor(arg1: string | Executable, arg2?: string[], arg3?: boolean, arg4?: CommandOptions) {
+		if (arg2 !== void 0 && arg3 !== void 0 && arg4 !== void 0) {
 			this.cmd = <string>arg1;
 			this.args = arg2;
-			this.shell = <boolean>arg3;
+			this.shell = arg3;
 			this.options = arg4;
-		} else if (arg3 && arg2) {
-			this.module = <string>arg1;
-			this.args = arg2;
-			this.shell = false;
-			this.options = <ForkOptions>arg3;
 		} else {
 			let executable = <Executable>arg1;
 			this.cmd = executable.command;
@@ -130,10 +126,10 @@ export abstract class AbstractProcess<TProgressData> {
 		if (this.options.env) {
 			let newEnv: IStringDictionary<string> = Object.create(null);
 			Object.keys(process.env).forEach((key) => {
-				newEnv[key] = process.env[key];
+				newEnv[key] = process.env[key]!;
 			});
 			Object.keys(this.options.env).forEach((key) => {
-				newEnv[key] = this.options.env[key];
+				newEnv[key] = this.options.env![key]!;
 			});
 			this.options.env = newEnv;
 		}
@@ -151,18 +147,16 @@ export abstract class AbstractProcess<TProgressData> {
 		return 'other';
 	}
 
-	public start(): PPromise<SuccessData, TProgressData> {
-		if (Platform.isWindows && ((this.options && this.options.cwd && TPath.isUNC(this.options.cwd)) || !this.options && !this.options.cwd && TPath.isUNC(process.cwd()))) {
-			return TPromise.wrapError(new Error(nls.localize('TaskRunner.UNC', 'Can\'t execute a shell command on an UNC drive.')));
+	public start(pp: ProgressCallback<TProgressData>): Promise<SuccessData> {
+		if (Platform.isWindows && ((this.options && this.options.cwd && TPath.isUNC(this.options.cwd)) || !this.options && TPath.isUNC(process.cwd()))) {
+			return Promise.reject(new Error(nls.localize('TaskRunner.UNC', 'Can\'t execute a shell command on a UNC drive.')));
 		}
 		return this.useExec().then((useExec) => {
-			let cc: TValueCallback<SuccessData>;
+			let cc: ValueCallback<SuccessData>;
 			let ee: ErrorCallback;
-			let pp: TProgressCallback<TProgressData>;
-			let result = new PPromise<any, TProgressData>((c, e, p) => {
+			let result = new Promise<any>((c, e) => {
 				cc = c;
 				ee = e;
-				pp = p;
 			});
 
 			if (useExec) {
@@ -183,7 +177,7 @@ export abstract class AbstractProcess<TProgressData> {
 					}
 				});
 			} else {
-				let childProcess: cp.ChildProcess = null;
+				let childProcess: cp.ChildProcess | null = null;
 				let closeHandler = (data: any) => {
 					this.childProcess = null;
 					this.childProcessPromise = null;
@@ -232,32 +226,22 @@ export abstract class AbstractProcess<TProgressData> {
 				} else {
 					if (this.cmd) {
 						childProcess = cp.spawn(this.cmd, this.args, this.options);
-					} else if (this.module) {
-						this.childProcessPromise = new TPromise<cp.ChildProcess>((c, e, p) => {
-							fork(this.module, this.args, <ForkOptions>this.options, (error: any, childProcess: cp.ChildProcess) => {
-								if (error) {
-									e(error);
-									ee({ terminated: this.terminateRequested, error: error });
-									return;
-								}
-								this.childProcess = childProcess;
-								this.childProcess.on('close', closeHandler);
-								this.handleSpawn(childProcess, cc, pp, ee, false);
-								c(childProcess);
-							});
-						});
 					}
 				}
 				if (childProcess) {
 					this.childProcess = childProcess;
-					this.childProcessPromise = TPromise.as(childProcess);
+					this.childProcessPromise = Promise.resolve(childProcess);
+					if (this.pidResolve) {
+						this.pidResolve(Types.isNumber(childProcess.pid) ? childProcess.pid : -1);
+						this.pidResolve = undefined;
+					}
 					childProcess.on('error', (error: Error) => {
 						this.childProcess = null;
 						ee({ terminated: this.terminateRequested, error: error });
 					});
 					if (childProcess.pid) {
 						this.childProcess.on('close', closeHandler);
-						this.handleSpawn(childProcess, cc, pp, ee, true);
+						this.handleSpawn(childProcess, cc!, pp, ee!, true);
 					}
 				}
 			}
@@ -265,10 +249,10 @@ export abstract class AbstractProcess<TProgressData> {
 		});
 	}
 
-	protected abstract handleExec(cc: TValueCallback<SuccessData>, pp: TProgressCallback<TProgressData>, error: Error, stdout: Buffer, stderr: Buffer): void;
-	protected abstract handleSpawn(childProcess: cp.ChildProcess, cc: TValueCallback<SuccessData>, pp: TProgressCallback<TProgressData>, ee: ErrorCallback, sync: boolean): void;
+	protected abstract handleExec(cc: ValueCallback<SuccessData>, pp: ProgressCallback<TProgressData>, error: Error | null, stdout: Buffer, stderr: Buffer): void;
+	protected abstract handleSpawn(childProcess: cp.ChildProcess, cc: ValueCallback<SuccessData>, pp: ProgressCallback<TProgressData>, ee: ErrorCallback, sync: boolean): void;
 
-	protected handleClose(data: any, cc: TValueCallback<SuccessData>, pp: TProgressCallback<TProgressData>, ee: ErrorCallback): void {
+	protected handleClose(data: any, cc: ValueCallback<SuccessData>, pp: ProgressCallback<TProgressData>, ee: ErrorCallback): void {
 		// Default is to do nothing.
 	}
 
@@ -287,13 +271,19 @@ export abstract class AbstractProcess<TProgressData> {
 		}
 	}
 
-	public get pid(): TPromise<number> {
-		return this.childProcessPromise.then(childProcess => childProcess.pid, err => -1);
+	public get pid(): Promise<number> {
+		if (this.childProcessPromise) {
+			return this.childProcessPromise.then(childProcess => childProcess.pid, err => -1);
+		} else {
+			return new Promise<number>((resolve) => {
+				this.pidResolve = resolve;
+			});
+		}
 	}
 
-	public terminate(): TPromise<TerminateResponse> {
+	public terminate(): Promise<TerminateResponse> {
 		if (!this.childProcessPromise) {
-			return TPromise.as<TerminateResponse>({ success: true });
+			return Promise.resolve<TerminateResponse>({ success: true });
 		}
 		return this.childProcessPromise.then((childProcess) => {
 			this.terminateRequested = true;
@@ -307,8 +297,8 @@ export abstract class AbstractProcess<TProgressData> {
 		});
 	}
 
-	private useExec(): TPromise<boolean> {
-		return new TPromise<boolean>((c, e, p) => {
+	private useExec(): Promise<boolean> {
+		return new Promise<boolean>((c, e) => {
 			if (!this.shell || !Platform.isWindows) {
 				c(false);
 			}
@@ -330,12 +320,11 @@ export class LineProcess extends AbstractProcess<LineData> {
 
 	public constructor(executable: Executable);
 	public constructor(cmd: string, args: string[], shell: boolean, options: CommandOptions);
-	public constructor(module: string, args: string[], options: ForkOptions);
 	public constructor(arg1: string | Executable, arg2?: string[], arg3?: boolean | ForkOptions, arg4?: CommandOptions) {
 		super(<any>arg1, arg2, <any>arg3, arg4);
 	}
 
-	protected handleExec(cc: TValueCallback<SuccessData>, pp: TProgressCallback<LineData>, error: Error, stdout: Buffer, stderr: Buffer) {
+	protected handleExec(cc: ValueCallback<SuccessData>, pp: ProgressCallback<LineData>, error: Error, stdout: Buffer, stderr: Buffer) {
 		[stdout, stderr].forEach((buffer: Buffer, index: number) => {
 			let lineDecoder = new LineDecoder();
 			let lines = lineDecoder.write(buffer);
@@ -350,7 +339,7 @@ export class LineProcess extends AbstractProcess<LineData> {
 		cc({ terminated: this.terminateRequested, error: error });
 	}
 
-	protected handleSpawn(childProcess: cp.ChildProcess, cc: TValueCallback<SuccessData>, pp: TProgressCallback<LineData>, ee: ErrorCallback, sync: boolean): void {
+	protected handleSpawn(childProcess: cp.ChildProcess, cc: ValueCallback<SuccessData>, pp: ProgressCallback<LineData>, ee: ErrorCallback, sync: boolean): void {
 		this.stdoutLineDecoder = new LineDecoder();
 		this.stderrLineDecoder = new LineDecoder();
 		childProcess.stdout.on('data', (data: Buffer) => {
@@ -363,7 +352,7 @@ export class LineProcess extends AbstractProcess<LineData> {
 		});
 	}
 
-	protected handleClose(data: any, cc: TValueCallback<SuccessData>, pp: TProgressCallback<LineData>, ee: ErrorCallback): void {
+	protected handleClose(data: any, cc: ValueCallback<SuccessData>, pp: ProgressCallback<LineData>, ee: ErrorCallback): void {
 		[this.stdoutLineDecoder.end(), this.stderrLineDecoder.end()].forEach((line, index) => {
 			if (line) {
 				pp({ line: line, source: index === 0 ? Source.stdout : Source.stderr });
@@ -381,7 +370,7 @@ export interface IQueuedSender {
 // queue is free again to consume messages.
 // On Windows we always wait for the send() method to return before sending the next message
 // to workaround https://github.com/nodejs/node/issues/7657 (IPC can freeze process)
-export function createQueuedSender(childProcess: cp.ChildProcess | NodeJS.Process): IQueuedSender {
+export function createQueuedSender(childProcess: cp.ChildProcess): IQueuedSender {
 	let msgQueue: string[] = [];
 	let useQueue = false;
 
@@ -412,4 +401,52 @@ export function createQueuedSender(childProcess: cp.ChildProcess | NodeJS.Proces
 	};
 
 	return { send };
+}
+
+export namespace win32 {
+	export function findExecutable(command: string, cwd?: string, paths?: string[]): string {
+		// If we have an absolute path then we take it.
+		if (path.isAbsolute(command)) {
+			return command;
+		}
+		if (cwd === void 0) {
+			cwd = process.cwd();
+		}
+		let dir = path.dirname(command);
+		if (dir !== '.') {
+			// We have a directory and the directory is relative (see above). Make the path absolute
+			// to the current working directory.
+			return path.join(cwd, command);
+		}
+		if (paths === void 0 && Types.isString(process.env.PATH)) {
+			paths = process.env.PATH.split(path.delimiter);
+		}
+		// No PATH environment. Make path absolute to the cwd.
+		if (paths === void 0 || paths.length === 0) {
+			return path.join(cwd, command);
+		}
+		// We have a simple file name. We get the path variable from the env
+		// and try to find the executable on the path.
+		for (let pathEntry of paths) {
+			// The path entry is absolute.
+			let fullPath: string;
+			if (path.isAbsolute(pathEntry)) {
+				fullPath = path.join(pathEntry, command);
+			} else {
+				fullPath = path.join(cwd, pathEntry, command);
+			}
+			if (fs.existsSync(fullPath)) {
+				return fullPath;
+			}
+			let withExtension = fullPath + '.com';
+			if (fs.existsSync(withExtension)) {
+				return withExtension;
+			}
+			withExtension = fullPath + '.exe';
+			if (fs.existsSync(withExtension)) {
+				return withExtension;
+			}
+		}
+		return path.join(cwd, command);
+	}
 }
