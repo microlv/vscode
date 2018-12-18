@@ -3164,8 +3164,8 @@ declare module 'vscode' {
 		/**
 		 * `true` if signature help was already showing when it was triggered.
 		 *
-		 * Retriggers occur when the signature help is already active and can be caused by typing a trigger character
-		 * or by a cursor move.
+		 * Retriggers occur when the signature help is already active and can be caused by actions such as
+		 * typing a trigger character, a cursor move, or document content changes.
 		 */
 		readonly isRetrigger: boolean;
 	}
@@ -3328,7 +3328,7 @@ declare module 'vscode' {
 
 		/**
 		 * Keep whitespace of the [insertText](#CompletionItem.insertText) as is. By default, the editor adjusts leading
-		 * whitespace of new lines so that they match the indentation of the line for which the item is accepeted - setting
+		 * whitespace of new lines so that they match the indentation of the line for which the item is accepted - setting
 		 * this to `true` will prevent that.
 		 */
 		keepWhitespace?: boolean;
@@ -6835,9 +6835,9 @@ declare module 'vscode' {
 		shellArgs?: string[];
 
 		/**
-		 * A path for the current working directory to be used for the terminal.
+		 * A path or Uri for the current working directory to be used for the terminal.
 		 */
-		cwd?: string;
+		cwd?: string | Uri;
 
 		/**
 		 * Object with environment variables that will be added to the VS Code process.
